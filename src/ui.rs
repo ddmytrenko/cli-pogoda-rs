@@ -3,10 +3,13 @@
 
 use std::io::IsTerminal;
 
-/// ANSI colour strings, or all-empty when colour is disabled.
+/// ANSI colour strings, or all-empty when colour is disabled. Warning boxes are
+/// coloured by severity level; notices (drought) use grey.
 pub struct Colors {
-    pub red_box: String,  // BOLD + RED   — loud meteo warnings
-    pub grey_box: String, // BOLD + DARK_GREY — quiet notices (drought)
+    pub yellow: String, // BOLD + yellow — level 1
+    pub orange: String, // BOLD + orange — level 2
+    pub red: String,    // BOLD + red    — level 3
+    pub grey: String,   // BOLD + grey   — notices
     pub reset: String,
 }
 
@@ -16,8 +19,10 @@ impl Colors {
         let on = std::env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal();
         if on {
             Colors {
-                red_box: "\x1b[1m\x1b[0;31m".into(),
-                grey_box: "\x1b[1m\x1b[1;30m".into(),
+                yellow: "\x1b[1m\x1b[0;33m".into(),
+                orange: "\x1b[1m\x1b[38;5;208m".into(),
+                red: "\x1b[1m\x1b[0;31m".into(),
+                grey: "\x1b[1m\x1b[1;30m".into(),
                 reset: "\x1b[0m".into(),
             }
         } else {
@@ -28,9 +33,21 @@ impl Colors {
     /// All-empty colours, for non-coloured output (pipes, tests).
     pub fn plain() -> Self {
         Colors {
-            red_box: String::new(),
-            grey_box: String::new(),
+            yellow: String::new(),
+            orange: String::new(),
+            red: String::new(),
+            grey: String::new(),
             reset: String::new(),
+        }
+    }
+
+    /// The box colour for a warning severity level (3=red, 2=orange, 1=yellow).
+    pub fn level(&self, level: i64) -> &str {
+        match level {
+            3 => &self.red,
+            2 => &self.orange,
+            1 => &self.yellow,
+            _ => &self.red,
         }
     }
 }

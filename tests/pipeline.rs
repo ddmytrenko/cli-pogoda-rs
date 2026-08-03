@@ -142,6 +142,87 @@ fn happy_path_renders_forecast_and_both_warning_boxes() {
 }
 
 #[test]
+fn splits_warnings_into_per_level_boxes_in_severity_order() {
+    let mut server = Server::new();
+    let cache = temp_cache("levels");
+
+    let mut guards = mock_forecast(&mut server);
+    guards.push(
+        server
+            .mock("GET", "/bdc")
+            .match_query(Matcher::Any)
+            .with_body(r#"{"city":"Krakow"}"#)
+            .create(),
+    );
+    guards.push(
+        server
+            .mock("GET", "/om")
+            .match_query(Matcher::Any)
+            .with_body(r#"{"timezone":"Europe/Warsaw"}"#)
+            .create(),
+    );
+    guards.push(
+        server
+            .mock("GET", "/meteo/api/v1/geo/search-reverse")
+            .match_query(Matcher::Any)
+            .with_body(r#"{"data":[{"teryt":"1261","dist":"0.5"}]}"#)
+            .create(),
+    );
+    // Two meteo warnings, different levels -> two separate boxes.
+    guards.push(
+        server
+            .mock("GET", "/dane/warningsmeteo")
+            .match_query(Matcher::Any)
+            .with_body(
+                r#"[{"nazwa_zdarzenia":"Upał","stopien":"3","obowiazuje_do":"2026-08-06 20:00:00","teryt":["1261"]},
+                    {"nazwa_zdarzenia":"Upał","stopien":"2","obowiazuje_do":"2026-08-03 20:00:00","teryt":["1261"]}]"#,
+            )
+            .create(),
+    );
+    guards.push(
+        server
+            .mock("GET", "/meteo/dyn/data/zlew.json")
+            .match_query(Matcher::Any)
+            .with_body(ZLEW)
+            .create(),
+    );
+    // A regular hydro warning (level 1, basin K1) plus a susza (level -1, basin K1).
+    guards.push(
+        server
+            .mock("GET", "/dane/warningshydro")
+            .match_query(Matcher::Any)
+            .with_body(
+                r#"[{"stopień":"1","zdarzenie":"Wezbranie","data_do":"2026-08-04 06:00:00","obszary":[{"kod_zlewni":["K1"]}]},
+                    {"stopień":"-1","zdarzenie":"Susza hydrologiczna","obszary":[{"kod_zlewni":["K1"]}]}]"#,
+            )
+            .create(),
+    );
+
+    let client = Client::with(endpoints_for(&server), Backoff::none());
+    let mut out = Vec::new();
+    let code = imgw_rs::run_place(
+        &client,
+        "50.06,19.94",
+        Some(cache.as_path()),
+        &Colors::plain(),
+        &mut out,
+    );
+    let text = String::from_utf8(out).unwrap();
+    assert_eq!(code, 0, "{text}");
+
+    // Four boxes: meteo level 3, meteo level 2, hydro level 1, susza notice — in order.
+    let i_l3 = text.find("Upał — level 3").expect("level 3 box");
+    let i_l2 = text.find("Upał — level 2").expect("level 2 box");
+    let i_hydro = text.find("Wezbranie — level 1").expect("hydro level 1 box");
+    let i_susza = text.find("Susza hydrologiczna (hydrological drought)").expect("susza notice");
+    assert!(i_l3 < i_l2, "level 3 must precede level 2\n{text}");
+    assert!(i_l2 < i_hydro, "meteo must precede hydro\n{text}");
+    assert!(i_hydro < i_susza, "hydro warnings must precede the drought notice\n{text}");
+    assert_eq!(text.matches("WARNING!").count(), 3, "3 warning boxes\n{text}");
+    assert_eq!(text.matches("NOTICE").count(), 1, "1 notice box\n{text}");
+}
+
+#[test]
 fn no_warnings_renders_only_the_forecast() {
     let mut server = Server::new();
     let cache = temp_cache("nowarn");

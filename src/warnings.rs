@@ -37,9 +37,20 @@ pub fn point_in_ring(ring: &[Vec<f64>], lon: f64, lat: f64) -> bool {
     inside
 }
 
-/// Build the meteo-warning lines for this point's powiat `teryt`, one per warning that
-/// covers it.
-pub fn meteo_lines(warn_json: &Value, teryt: &str) -> Vec<String> {
+/// A single warning: its severity `level` and its rendered display `line`.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Warning {
+    pub level: i64,
+    pub line: String,
+}
+
+fn parse_level(s: &str) -> Option<i64> {
+    s.trim().parse().ok()
+}
+
+/// Meteo warnings for this point's powiat `teryt`, one per warning that covers it,
+/// each tagged with its severity level (1/2/3) for colour grouping.
+pub fn meteo_warnings(warn_json: &Value, teryt: &str) -> Vec<Warning> {
     let arr = match warn_json.as_array() {
         Some(a) => a,
         None => return Vec::new(),
@@ -51,13 +62,77 @@ pub fn meteo_lines(warn_json: &Value, teryt: &str) -> Vec<String> {
                 .map(|codes| codes.iter().any(|c| c.as_str() == Some(teryt)))
                 .unwrap_or(false)
         })
-        .map(|w| {
+        .filter_map(|w| {
+            let stopien = w.get("stopien").and_then(Value::as_str)?;
+            let level = parse_level(stopien)?;
             let name = w.get("nazwa_zdarzenia").and_then(Value::as_str).unwrap_or("");
-            let stopien = w.get("stopien").and_then(Value::as_str).unwrap_or("");
             let until = w.get("obowiazuje_do").and_then(Value::as_str).unwrap_or("");
-            format!("{name} — level {stopien}, until {until}")
+            Some(Warning {
+                level,
+                line: format!("{name} — level {stopien}, until {until}"),
+            })
         })
         .collect()
+}
+
+/// Regular hydrological warnings (levels 1/2/3) for this point's river basin `kod`.
+/// The hardcoded drought level (-1, susza hydrologiczna) is excluded — see
+/// [`drought_hits_basin`] for that separate notice.
+pub fn hydro_warnings(hydro_json: &Value, kod: &str) -> Vec<Warning> {
+    let arr = match hydro_json.as_array() {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    arr.iter()
+        .filter_map(|w| {
+            let stopien = w.get("stopień").and_then(Value::as_str)?;
+            let level = parse_level(stopien)?;
+            if level < 1 {
+                return None; // drought (-1) is handled as a separate notice
+            }
+            if !hydro_covers_basin(w, kod) {
+                return None;
+            }
+            let name = w.get("zdarzenie").and_then(Value::as_str).unwrap_or("");
+            let until = w.get("data_do").and_then(Value::as_str).unwrap_or("");
+            Some(Warning {
+                level,
+                line: format!("{name} — level {stopien}, until {until}"),
+            })
+        })
+        .collect()
+}
+
+/// Whether a hydro warning's affected areas include the basin `kod`.
+fn hydro_covers_basin(w: &Value, kod: &str) -> bool {
+    w.get("obszary")
+        .and_then(Value::as_array)
+        .map(|areas| {
+            areas.iter().any(|a| {
+                a.get("kod_zlewni")
+                    .and_then(Value::as_array)
+                    .map(|codes| codes.iter().any(|c| c.as_str() == Some(kod)))
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// Group warnings into boxes by severity, highest first: returns `(level, lines)` for
+/// each of levels 3, 2, 1 that has any warnings.
+pub fn boxes_by_level(warnings: &[Warning]) -> Vec<(i64, Vec<String>)> {
+    let mut out = Vec::new();
+    for level in [3, 2, 1] {
+        let lines: Vec<String> = warnings
+            .iter()
+            .filter(|w| w.level == level)
+            .map(|w| w.line.clone())
+            .collect();
+        if !lines.is_empty() {
+            out.push((level, lines));
+        }
+    }
+    out
 }
 
 /// A river basin, identified by its KOD and human NAZWA.
@@ -121,26 +196,14 @@ pub fn drought_hits_basin(hydro_json: &Value, kod: &str) -> bool {
         Some(a) => a,
         None => return false,
     };
-    for w in arr {
+    arr.iter().any(|w| {
         let is_drought = w.get("stopień").and_then(Value::as_str) == Some("-1")
             || w.get("zdarzenie")
                 .and_then(Value::as_str)
                 .map(|s| s.to_lowercase().contains("susza"))
                 .unwrap_or(false);
-        if !is_drought {
-            continue;
-        }
-        if let Some(areas) = w.get("obszary").and_then(Value::as_array) {
-            for a in areas {
-                if let Some(codes) = a.get("kod_zlewni").and_then(Value::as_array) {
-                    if codes.iter().any(|c| c.as_str() == Some(kod)) {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    false
+        is_drought && hydro_covers_basin(w, kod)
+    })
 }
 
 #[cfg(test)]
@@ -173,17 +236,67 @@ mod tests {
     }
 
     #[test]
-    fn meteo_lines_filter_by_teryt() {
+    fn meteo_warnings_filter_by_teryt_and_carry_level() {
         let warn: Value = serde_json::from_str(
             r#"[
               {"nazwa_zdarzenia":"Upał","stopien":"3","obowiazuje_do":"2026-08-01 20:00:00","teryt":["1206","1201"]},
+              {"nazwa_zdarzenia":"Upał","stopien":"2","obowiazuje_do":"2026-08-01 20:00:00","teryt":["1206"]},
               {"nazwa_zdarzenia":"Burze","stopien":"1","obowiazuje_do":"2026-07-31 21:00:00","teryt":["1465"]}
             ]"#,
         )
         .unwrap();
-        let lines = meteo_lines(&warn, "1206");
-        assert_eq!(lines, vec!["Upał — level 3, until 2026-08-01 20:00:00"]);
-        assert!(meteo_lines(&warn, "9999").is_empty());
+        let ws = meteo_warnings(&warn, "1206");
+        assert_eq!(ws.len(), 2);
+        assert!(ws.contains(&Warning {
+            level: 3,
+            line: "Upał — level 3, until 2026-08-01 20:00:00".into()
+        }));
+        assert!(ws.contains(&Warning {
+            level: 2,
+            line: "Upał — level 2, until 2026-08-01 20:00:00".into()
+        }));
+        assert!(meteo_warnings(&warn, "9999").is_empty());
+    }
+
+    #[test]
+    fn boxes_by_level_groups_highest_first() {
+        let ws = vec![
+            Warning { level: 1, line: "a".into() },
+            Warning { level: 3, line: "b".into() },
+            Warning { level: 1, line: "c".into() },
+        ];
+        let boxes = boxes_by_level(&ws);
+        assert_eq!(
+            boxes,
+            vec![
+                (3, vec!["b".to_string()]),
+                (1, vec!["a".to_string(), "c".to_string()]),
+            ]
+        );
+    }
+
+    #[test]
+    fn hydro_warnings_filter_by_basin_and_exclude_drought() {
+        let hydro: Value = serde_json::from_str(
+            r#"[
+              {"stopień":"-1","zdarzenie":"Susza hydrologiczna","data_do":"2026-09-01 00:00:00",
+               "obszary":[{"kod_zlewni":["R_K_MP_1"]}]},
+              {"stopień":"2","zdarzenie":"Gwałtowne wzrosty stanów wody","data_do":"2026-08-03 22:00:00",
+               "obszary":[{"kod_zlewni":["R_K_MP_1","R_K_MP_9"]}]},
+              {"stopień":"1","zdarzenie":"Wezbranie","data_do":"2026-08-04 06:00:00",
+               "obszary":[{"kod_zlewni":["R_K_MP_2"]}]}
+            ]"#,
+        )
+        .unwrap();
+        let ws = hydro_warnings(&hydro, "R_K_MP_1");
+        // only the level-2 warning covers R_K_MP_1; drought (-1) is excluded here
+        assert_eq!(
+            ws,
+            vec![Warning {
+                level: 2,
+                line: "Gwałtowne wzrosty stanów wody — level 2, until 2026-08-03 22:00:00".into()
+            }]
+        );
     }
 
     #[test]

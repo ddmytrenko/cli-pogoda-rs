@@ -134,13 +134,14 @@ fn print_warnings(
     cache: Option<&Path>,
     out: &mut impl Write,
 ) {
-    // Meteo warnings, filtered to this point's powiat TERYT.
+    // Meteo warnings, filtered to this point's powiat TERYT, one box per severity
+    // level (3=red, 2=orange, 1=yellow), highest first.
     if let Some(teryt) = imgw::reverse_teryt(client, token, loc.lat, loc.lon) {
         if let Some(raw) = imgw::danepubliczne(client, "warningsmeteo") {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
-                let lines = warnings::meteo_lines(&json, &teryt);
-                if !lines.is_empty() {
-                    for l in ui::warn_box(&colors.red_box, &colors.reset, "WARNING!", &lines) {
+                let ws = warnings::meteo_warnings(&json, &teryt);
+                for (level, lines) in warnings::boxes_by_level(&ws) {
+                    for l in ui::warn_box(colors.level(level), &colors.reset, "WARNING!", &lines) {
                         let _ = writeln!(out, "{l}");
                     }
                 }
@@ -148,20 +149,28 @@ fn print_warnings(
         }
     }
 
-    // Hydrological drought, filtered to this point's river basin.
+    // Hydrological warnings, filtered to this point's river basin: regular warnings
+    // (levels 1/2/3) as coloured boxes, then the drought (susza, level -1) as a grey
+    // notice.
     if let Some(cache) = cache {
         if let Some(zlew) = imgw::ensure_zlew(client, cache) {
             if let Some(basin) = warnings::find_basin(&zlew, loc.lat, loc.lon) {
                 if let Some(raw) = imgw::danepubliczne(client, "warningshydro") {
                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
+                        let ws = warnings::hydro_warnings(&json, &basin.kod);
+                        for (level, lines) in warnings::boxes_by_level(&ws) {
+                            for l in
+                                ui::warn_box(colors.level(level), &colors.reset, "WARNING!", &lines)
+                            {
+                                let _ = writeln!(out, "{l}");
+                            }
+                        }
                         if warnings::drought_hits_basin(&json, &basin.kod) {
                             let line = format!(
                                 "Susza hydrologiczna (hydrological drought) — {} basin",
                                 basin.nazwa
                             );
-                            for l in
-                                ui::warn_box(&colors.grey_box, &colors.reset, "NOTICE", &[line])
-                            {
+                            for l in ui::warn_box(&colors.grey, &colors.reset, "NOTICE", &[line]) {
                                 let _ = writeln!(out, "{l}");
                             }
                         }
