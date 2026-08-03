@@ -108,7 +108,7 @@ pub fn meteo_warnings(warn_json: &Value, teryt: &str, today: NaiveDate) -> Vec<W
                 level,
                 from: from.to_string(),
                 until: until.to_string(),
-                line: format!("{name} — level {stopien}, from {from_disp} until {until_disp}"),
+                line: format!("{name} — from {from_disp} until {until_disp}"),
             })
         })
         .collect()
@@ -140,7 +140,7 @@ pub fn hydro_warnings(hydro_json: &Value, kod: &str, today: NaiveDate) -> Vec<Wa
                 level,
                 from: from.to_string(),
                 until: until.to_string(),
-                line: format!("{name} — level {stopien}, from {from_disp} until {until_disp}"),
+                line: format!("{name} — from {from_disp} until {until_disp}"),
             })
         })
         .collect()
@@ -295,14 +295,14 @@ mod tests {
             level: 3,
             from: "2026-08-04 12:00".into(),
             until: "2026-08-01 20:00".into(),
-            line: "Upał — level 3, from tomorrow 12:00 until 2026-08-01 20:00".into()
+            line: "Upał — from tomorrow 12:00 until 2026-08-01 20:00".into()
         }));
         // from is today (08-03) -> time only
         assert!(ws.contains(&Warning {
             level: 2,
             from: "2026-08-03 12:00".into(),
             until: "2026-08-01 20:00".into(),
-            line: "Upał — level 2, from 12:00 until 2026-08-01 20:00".into()
+            line: "Upał — from 12:00 until 2026-08-01 20:00".into()
         }));
         assert!(meteo_warnings(&warn, "9999", today).is_empty());
     }
@@ -397,7 +397,7 @@ mod tests {
                 level: 2,
                 from: "2026-08-03 14:10".into(),
                 until: "2026-08-03 22:00".into(),
-                line: "Gwałtowne wzrosty stanów wody — level 2, from 14:10 until 22:00".into()
+                line: "Gwałtowne wzrosty stanów wody — from 14:10 until 22:00".into()
             }]
         );
     }

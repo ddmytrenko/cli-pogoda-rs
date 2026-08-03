@@ -128,9 +128,9 @@ fn happy_path_renders_forecast_and_both_warning_boxes() {
     let text = String::from_utf8(out).unwrap();
 
     assert_eq!(code, 0, "output was:\n{text}");
-    // meteo warning box
-    assert!(text.contains("WARNING!"), "{text}");
-    assert!(text.contains("Upał — level 3, from 2099-01-04 12:00 until 2099-01-06 20:00"), "{text}");
+    // meteo warning box: severity in the caption, event + window on the line
+    assert!(text.contains("WARNING! (level 3)"), "{text}");
+    assert!(text.contains("Upał — from 2099-01-04 12:00 until 2099-01-06 20:00"), "{text}");
     // drought box, filtered to the point's basin
     assert!(text.contains("NOTICE"), "{text}");
     assert!(text.contains("Susza hydrologiczna (hydrological drought) — TestBasin basin"), "{text}");
@@ -271,13 +271,16 @@ fn splits_warnings_into_per_level_boxes_in_severity_order() {
     assert_eq!(code, 0, "{text}");
 
     // Four boxes: meteo level 3, meteo level 2, hydro level 1, susza notice — in order.
-    let i_l3 = text.find("Upał — level 3").expect("level 3 box");
-    let i_l2 = text.find("Upał — level 2").expect("level 2 box");
-    let i_hydro = text.find("Wezbranie — level 1").expect("hydro level 1 box");
+    // Levels are in the captions; the hydro level-1 box is the only "(level 1)".
+    let i_l3 = text.find("WARNING! (level 3)").expect("level 3 box");
+    let i_l2 = text.find("WARNING! (level 2)").expect("level 2 box");
+    let i_hydro = text.find("WARNING! (level 1)").expect("hydro level 1 box");
     let i_susza = text.find("Susza hydrologiczna (hydrological drought)").expect("susza notice");
     assert!(i_l3 < i_l2, "level 3 must precede level 2\n{text}");
     assert!(i_l2 < i_hydro, "meteo must precede hydro\n{text}");
     assert!(i_hydro < i_susza, "hydro warnings must precede the drought notice\n{text}");
+    // the hydro box carries the event on its line
+    assert!(text.contains("Wezbranie — from"), "{text}");
     assert_eq!(text.matches("WARNING!").count(), 3, "3 warning boxes\n{text}");
     assert_eq!(text.matches("NOTICE").count(), 1, "1 notice box\n{text}");
 }

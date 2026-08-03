@@ -146,7 +146,8 @@ fn print_warnings(
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
                 let ws = warnings::meteo_warnings(&json, &teryt, today);
                 for (level, lines) in warnings::boxes_by_level(&ws) {
-                    for l in ui::warn_box(colors.level(level), &colors.reset, "WARNING!", &lines) {
+                    let caption = format!("WARNING! (level {level})");
+                    for l in ui::warn_box(colors.level(level), &colors.reset, &caption, &lines) {
                         let _ = writeln!(out, "{l}");
                     }
                 }
@@ -164,8 +165,8 @@ fn print_warnings(
                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
                         let ws = warnings::hydro_warnings(&json, &basin.kod, today);
                         for (level, lines) in warnings::boxes_by_level(&ws) {
-                            for l in
-                                ui::warn_box(colors.level(level), &colors.reset, "WARNING!", &lines)
+                            let caption = format!("WARNING! (level {level})");
+                            for l in ui::warn_box(colors.level(level), &colors.reset, &caption, &lines)
                             {
                                 let _ = writeln!(out, "{l}");
                             }
