@@ -134,12 +134,17 @@ fn print_warnings(
     cache: Option<&Path>,
     out: &mut impl Write,
 ) {
+    // "Today" for relative timestamp formatting, in the warnings' timezone (Poland).
+    let today = chrono::Utc::now()
+        .with_timezone(&chrono_tz::Europe::Warsaw)
+        .date_naive();
+
     // Meteo warnings, filtered to this point's powiat TERYT, one box per severity
     // level (3=red, 2=orange, 1=yellow), highest first.
     if let Some(teryt) = imgw::reverse_teryt(client, token, loc.lat, loc.lon) {
         if let Some(raw) = imgw::danepubliczne(client, "warningsmeteo") {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
-                let ws = warnings::meteo_warnings(&json, &teryt);
+                let ws = warnings::meteo_warnings(&json, &teryt, today);
                 for (level, lines) in warnings::boxes_by_level(&ws) {
                     for l in ui::warn_box(colors.level(level), &colors.reset, "WARNING!", &lines) {
                         let _ = writeln!(out, "{l}");
@@ -157,7 +162,7 @@ fn print_warnings(
             if let Some(basin) = warnings::find_basin(&zlew, loc.lat, loc.lon) {
                 if let Some(raw) = imgw::danepubliczne(client, "warningshydro") {
                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
-                        let ws = warnings::hydro_warnings(&json, &basin.kod);
+                        let ws = warnings::hydro_warnings(&json, &basin.kod, today);
                         for (level, lines) in warnings::boxes_by_level(&ws) {
                             for l in
                                 ui::warn_box(colors.level(level), &colors.reset, "WARNING!", &lines)

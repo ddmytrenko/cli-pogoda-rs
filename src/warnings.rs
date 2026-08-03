@@ -9,6 +9,7 @@
 //! The point-in-polygon test and both filters are pure and unit-tested; the network
 //! fetches live in imgw.rs.
 
+use chrono::NaiveDate;
 use serde_json::Value;
 use std::path::Path;
 
@@ -61,9 +62,30 @@ fn drop_seconds(ts: &str) -> &str {
     }
 }
 
+/// Render a trimmed "YYYY-MM-DD HH:MM" timestamp relative to `today`: just "HH:MM" if
+/// it's today, "yesterday HH:MM" / "tomorrow HH:MM" for the adjacent days, otherwise
+/// the full "YYYY-MM-DD HH:MM". Non-conforming input is returned unchanged.
+fn humanize_ts(ts: &str, today: NaiveDate) -> String {
+    if ts.len() < 16 {
+        return ts.to_string();
+    }
+    let date_part = &ts[..10];
+    let time = &ts[11..16];
+    match NaiveDate::parse_from_str(date_part, "%Y-%m-%d") {
+        Ok(d) => match (d - today).num_days() {
+            0 => time.to_string(),
+            -1 => format!("yesterday {time}"),
+            1 => format!("tomorrow {time}"),
+            _ => ts.to_string(),
+        },
+        Err(_) => ts.to_string(),
+    }
+}
+
 /// Meteo warnings for this point's powiat `teryt`, one per warning that covers it,
-/// each tagged with its severity level (1/2/3) for colour grouping.
-pub fn meteo_warnings(warn_json: &Value, teryt: &str) -> Vec<Warning> {
+/// each tagged with its severity level (1/2/3) for colour grouping. `today` (in the
+/// timestamps' timezone) drives the relative "today/yesterday/tomorrow" formatting.
+pub fn meteo_warnings(warn_json: &Value, teryt: &str, today: NaiveDate) -> Vec<Warning> {
     let arr = match warn_json.as_array() {
         Some(a) => a,
         None => return Vec::new(),
@@ -81,11 +103,12 @@ pub fn meteo_warnings(warn_json: &Value, teryt: &str) -> Vec<Warning> {
             let name = w.get("nazwa_zdarzenia").and_then(Value::as_str).unwrap_or("");
             let from = drop_seconds(w.get("obowiazuje_od").and_then(Value::as_str).unwrap_or(""));
             let until = drop_seconds(w.get("obowiazuje_do").and_then(Value::as_str).unwrap_or(""));
+            let (from_disp, until_disp) = (humanize_ts(from, today), humanize_ts(until, today));
             Some(Warning {
                 level,
                 from: from.to_string(),
                 until: until.to_string(),
-                line: format!("{name} — level {stopien}, from {from} until {until}"),
+                line: format!("{name} — level {stopien}, from {from_disp} until {until_disp}"),
             })
         })
         .collect()
@@ -94,7 +117,7 @@ pub fn meteo_warnings(warn_json: &Value, teryt: &str) -> Vec<Warning> {
 /// Regular hydrological warnings (levels 1/2/3) for this point's river basin `kod`.
 /// The hardcoded drought level (-1, susza hydrologiczna) is excluded — see
 /// [`drought_hits_basin`] for that separate notice.
-pub fn hydro_warnings(hydro_json: &Value, kod: &str) -> Vec<Warning> {
+pub fn hydro_warnings(hydro_json: &Value, kod: &str, today: NaiveDate) -> Vec<Warning> {
     let arr = match hydro_json.as_array() {
         Some(a) => a,
         None => return Vec::new(),
@@ -112,11 +135,12 @@ pub fn hydro_warnings(hydro_json: &Value, kod: &str) -> Vec<Warning> {
             let name = w.get("zdarzenie").and_then(Value::as_str).unwrap_or("");
             let from = drop_seconds(w.get("data_od").and_then(Value::as_str).unwrap_or(""));
             let until = drop_seconds(w.get("data_do").and_then(Value::as_str).unwrap_or(""));
+            let (from_disp, until_disp) = (humanize_ts(from, today), humanize_ts(until, today));
             Some(Warning {
                 level,
                 from: from.to_string(),
                 until: until.to_string(),
-                line: format!("{name} — level {stopien}, from {from} until {until}"),
+                line: format!("{name} — level {stopien}, from {from_disp} until {until_disp}"),
             })
         })
         .collect()
@@ -263,21 +287,24 @@ mod tests {
             ]"#,
         )
         .unwrap();
-        let ws = meteo_warnings(&warn, "1206");
+        let today = NaiveDate::from_ymd_opt(2026, 8, 3).unwrap();
+        let ws = meteo_warnings(&warn, "1206", today);
         assert_eq!(ws.len(), 2);
+        // from is tomorrow (08-04); until is 08-01, two days back -> shown absolute
         assert!(ws.contains(&Warning {
             level: 3,
             from: "2026-08-04 12:00".into(),
             until: "2026-08-01 20:00".into(),
-            line: "Upał — level 3, from 2026-08-04 12:00 until 2026-08-01 20:00".into()
+            line: "Upał — level 3, from tomorrow 12:00 until 2026-08-01 20:00".into()
         }));
+        // from is today (08-03) -> time only
         assert!(ws.contains(&Warning {
             level: 2,
             from: "2026-08-03 12:00".into(),
             until: "2026-08-01 20:00".into(),
-            line: "Upał — level 2, from 2026-08-03 12:00 until 2026-08-01 20:00".into()
+            line: "Upał — level 2, from 12:00 until 2026-08-01 20:00".into()
         }));
-        assert!(meteo_warnings(&warn, "9999").is_empty());
+        assert!(meteo_warnings(&warn, "9999", today).is_empty());
     }
 
     fn w(level: i64, from: &str, until: &str, line: &str) -> Warning {
@@ -294,6 +321,17 @@ mod tests {
         assert_eq!(drop_seconds("2026-08-06 20:00:00"), "2026-08-06 20:00");
         assert_eq!(drop_seconds("2026-08-06 20:00"), "2026-08-06 20:00"); // already trimmed
         assert_eq!(drop_seconds(""), "");
+    }
+
+    #[test]
+    fn humanize_ts_uses_relative_days_around_today() {
+        let today = NaiveDate::from_ymd_opt(2026, 8, 3).unwrap();
+        assert_eq!(humanize_ts("2026-08-03 09:05", today), "09:05"); // today -> time only
+        assert_eq!(humanize_ts("2026-08-02 23:59", today), "yesterday 23:59");
+        assert_eq!(humanize_ts("2026-08-04 06:00", today), "tomorrow 06:00");
+        assert_eq!(humanize_ts("2026-08-06 20:00", today), "2026-08-06 20:00"); // further out
+        assert_eq!(humanize_ts("2026-07-31 12:00", today), "2026-07-31 12:00"); // 3 days back
+        assert_eq!(humanize_ts("", today), ""); // non-conforming
     }
 
     #[test]
@@ -349,15 +387,17 @@ mod tests {
             ]"#,
         )
         .unwrap();
-        let ws = hydro_warnings(&hydro, "R_K_MP_1");
-        // only the level-2 warning covers R_K_MP_1; drought (-1) is excluded here
+        let today = NaiveDate::from_ymd_opt(2026, 8, 3).unwrap();
+        let ws = hydro_warnings(&hydro, "R_K_MP_1", today);
+        // only the level-2 warning covers R_K_MP_1; drought (-1) is excluded here.
+        // both timestamps are today -> shown as time only
         assert_eq!(
             ws,
             vec![Warning {
                 level: 2,
                 from: "2026-08-03 14:10".into(),
                 until: "2026-08-03 22:00".into(),
-                line: "Gwałtowne wzrosty stanów wody — level 2, from 2026-08-03 14:10 until 2026-08-03 22:00".into()
+                line: "Gwałtowne wzrosty stanów wody — level 2, from 14:10 until 22:00".into()
             }]
         );
     }

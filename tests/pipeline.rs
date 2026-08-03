@@ -95,7 +95,7 @@ fn happy_path_renders_forecast_and_both_warning_boxes() {
             .mock("GET", "/dane/warningsmeteo")
             .match_query(Matcher::Any)
             .with_body(
-                r#"[{"nazwa_zdarzenia":"Upał","stopien":"3","obowiazuje_od":"2026-08-04 12:00:00","obowiazuje_do":"2026-08-06 20:00:00","teryt":["1261","1201"]}]"#,
+                r#"[{"nazwa_zdarzenia":"Upał","stopien":"3","obowiazuje_od":"2099-01-04 12:00:00","obowiazuje_do":"2099-01-06 20:00:00","teryt":["1261","1201"]}]"#,
             )
             .create(),
     );
@@ -130,7 +130,7 @@ fn happy_path_renders_forecast_and_both_warning_boxes() {
     assert_eq!(code, 0, "output was:\n{text}");
     // meteo warning box
     assert!(text.contains("WARNING!"), "{text}");
-    assert!(text.contains("Upał — level 3, from 2026-08-04 12:00 until 2026-08-06 20:00"), "{text}");
+    assert!(text.contains("Upał — level 3, from 2099-01-04 12:00 until 2099-01-06 20:00"), "{text}");
     // drought box, filtered to the point's basin
     assert!(text.contains("NOTICE"), "{text}");
     assert!(text.contains("Susza hydrologiczna (hydrological drought) — TestBasin basin"), "{text}");
