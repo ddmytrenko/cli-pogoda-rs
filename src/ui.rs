@@ -21,11 +21,16 @@ impl Colors {
                 reset: "\x1b[0m".into(),
             }
         } else {
-            Colors {
-                red_box: String::new(),
-                grey_box: String::new(),
-                reset: String::new(),
-            }
+            Colors::plain()
+        }
+    }
+
+    /// All-empty colours, for non-coloured output (pipes, tests).
+    pub fn plain() -> Self {
+        Colors {
+            red_box: String::new(),
+            grey_box: String::new(),
+            reset: String::new(),
         }
     }
 }

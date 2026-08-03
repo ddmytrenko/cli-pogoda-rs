@@ -15,9 +15,11 @@ pub mod weather;
 
 use client::Client;
 use config::Config;
+use std::io::Write;
+use std::path::Path;
 use ui::Colors;
 
-/// Entry point used by the binary: parse args + config, then run and print.
+/// Entry point used by the binary: parse args + config, then run and print to stdout.
 pub fn run() -> i32 {
     let args = match Args::parse(std::env::args().skip(1)) {
         Ok(a) => a,
@@ -50,9 +52,25 @@ pub fn run() -> i32 {
     };
 
     let client = Client::new();
+    let cache = config::cache_dir();
+    let colors = Colors::detect();
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    run_place(&client, &place, cache.as_deref(), &colors, &mut out)
+}
 
+/// Fetch and render the forecast (with warnings) for `place`, writing to `out`. Returns
+/// a process exit code; user-facing errors go to stderr. This is the testable core:
+/// point `client`'s endpoints at a mock server and capture `out`.
+pub fn run_place(
+    client: &Client,
+    place: &str,
+    cache: Option<&Path>,
+    colors: &Colors,
+    out: &mut impl Write,
+) -> i32 {
     // 1. Resolve to lat/lon + display name + timezone.
-    let loc = match geo::resolve(&client, &place) {
+    let loc = match geo::resolve(client, place) {
         Ok(l) => l,
         Err(e) => {
             eprintln!("imgw: {e}");
@@ -61,20 +79,18 @@ pub fn run() -> i32 {
     };
 
     // 2. Point forecast. Resolve the token; on failure refresh it once.
-    let cache = config::cache_dir();
     let mut token = cache
-        .as_deref()
-        .and_then(|d| imgw::token(&client, d, false).ok())
+        .and_then(|d| imgw::token(client, d, false).ok())
         .unwrap_or_else(|| imgw::FALLBACK_TOKEN.to_string());
 
-    let mut body = imgw::forecast(&client, &token, loc.lat, loc.lon)
+    let mut body = imgw::forecast(client, &token, loc.lat, loc.lon)
         .ok()
         .filter(|b| !b.trim().is_empty());
     if body.is_none() {
-        if let Some(d) = cache.as_deref() {
-            if let Ok(t) = imgw::token(&client, d, true) {
+        if let Some(d) = cache {
+            if let Ok(t) = imgw::token(client, d, true) {
                 token = t;
-                body = imgw::forecast(&client, &token, loc.lat, loc.lon)
+                body = imgw::forecast(client, &token, loc.lat, loc.lon)
                     .ok()
                     .filter(|b| !b.trim().is_empty());
             }
@@ -99,25 +115,24 @@ pub fn run() -> i32 {
         }
     };
 
-    let colors = Colors::detect();
-
-    // 3. Warning boxes, printed above the forecast: meteo (loud, red) then drought
-    // (quiet, grey), each filtered to this exact point.
-    print_warnings(&client, &colors, &token, &loc, cache.as_deref());
+    // 3. Warning boxes, above the forecast: meteo (loud, red) then drought (quiet,
+    // grey), each filtered to this exact point.
+    print_warnings(client, colors, &token, &loc, cache, out);
 
     // 4. The forecast itself.
-    print_forecast(&fc, &loc);
+    print_forecast(&fc, &loc, out);
 
     0
 }
 
-/// Print any warning boxes that apply to this point.
+/// Write any warning boxes that apply to this point.
 fn print_warnings(
     client: &Client,
     colors: &Colors,
     token: &str,
     loc: &geo::Location,
-    cache: Option<&std::path::Path>,
+    cache: Option<&Path>,
+    out: &mut impl Write,
 ) {
     // Meteo warnings, filtered to this point's powiat TERYT.
     if let Some(teryt) = imgw::reverse_teryt(client, token, loc.lat, loc.lon) {
@@ -126,7 +141,7 @@ fn print_warnings(
                 let lines = warnings::meteo_lines(&json, &teryt);
                 if !lines.is_empty() {
                     for l in ui::warn_box(&colors.red_box, &colors.reset, "WARNING!", &lines) {
-                        println!("{l}");
+                        let _ = writeln!(out, "{l}");
                     }
                 }
             }
@@ -147,7 +162,7 @@ fn print_warnings(
                             for l in
                                 ui::warn_box(&colors.grey_box, &colors.reset, "NOTICE", &[line])
                             {
-                                println!("{l}");
+                                let _ = writeln!(out, "{l}");
                             }
                         }
                     }
@@ -157,15 +172,16 @@ fn print_warnings(
     }
 }
 
-/// Print the forecast block: banner, precip, wind, pressure, humidity, cloud, sun.
-fn print_forecast(fc: &forecast::Forecast, loc: &geo::Location) {
+/// Write the forecast block: banner, precip, wind, pressure, humidity, cloud, sun.
+fn print_forecast(fc: &forecast::Forecast, loc: &geo::Location, out: &mut impl Write) {
     let cond = weather::condition(&fc.icon, fc.rain, fc.snow, fc.prec);
     let cond_suffix = if cond.is_empty() {
         String::new()
     } else {
         format!(", {cond}")
     };
-    println!(
+    let _ = writeln!(
+        out,
         " Weather in {}: {:.1} °C{}  (IMGW HYBRID, feels {:.1} °C)",
         loc.label, fc.temp, cond_suffix, fc.feels
     );
@@ -181,33 +197,35 @@ fn print_forecast(fc: &forecast::Forecast, loc: &geo::Location) {
         } else {
             "Precipitation"
         };
-        println!(
+        let _ = writeln!(
+            out,
             "   {}: {:.1} mm now, {:.1} mm over next {}h",
             ptype, fc.prec, fc.prec_sum, h
         );
     } else {
-        println!("   Precipitation: none (dry next {h}h)");
+        let _ = writeln!(out, "   Precipitation: none (dry next {h}h)");
     }
 
     if !fc.wspeed.is_empty() {
         let card = weather::cardinal(&fc.wdir);
-        print!("   Wind: {} m/s {} ({}°)", fc.wspeed, card, fc.wdir);
+        let _ = write!(out, "   Wind: {} m/s {} ({}°)", fc.wspeed, card, fc.wdir);
         if !fc.gust.is_empty() {
-            print!(", gust {} m/s", fc.gust);
+            let _ = write!(out, ", gust {} m/s", fc.gust);
         }
-        println!();
+        let _ = writeln!(out);
     }
     if fc.pres > 0.0 {
-        println!("   Pressure: {:.0} hPa", fc.pres);
+        let _ = writeln!(out, "   Pressure: {:.0} hPa", fc.pres);
     }
     if !fc.hum.is_empty() {
-        println!("   Humidity: {}%", fc.hum);
+        let _ = writeln!(out, "   Humidity: {}%", fc.hum);
     }
     if !fc.cloud.is_empty() {
-        println!("   Cloud: {}%", fc.cloud);
+        let _ = writeln!(out, "   Cloud: {}%", fc.cloud);
     }
     if let Some((sr, ss, daysec)) = sun_times(&fc.sunrise, &fc.sunset, &loc.tz) {
-        println!(
+        let _ = writeln!(
+            out,
             "   Sunrise: {}   Sunset: {}   (day {}h {:02}m)",
             sr,
             ss,
