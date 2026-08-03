@@ -16,6 +16,9 @@ serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 chrono-tz = "0.10"
 
+[dev-dependencies]
+mockito = "1"
+
 [profile.release]
 strip = true
 lto = true
