@@ -51,6 +51,16 @@ fn parse_level(s: &str) -> Option<i64> {
     s.trim().parse().ok()
 }
 
+/// Trim seconds off an IMGW timestamp: "YYYY-MM-DD HH:MM:SS" -> "YYYY-MM-DD HH:MM".
+/// Anything not in that exact shape is returned unchanged.
+fn drop_seconds(ts: &str) -> &str {
+    if ts.len() == 19 && ts.as_bytes()[16] == b':' {
+        &ts[..16]
+    } else {
+        ts
+    }
+}
+
 /// Meteo warnings for this point's powiat `teryt`, one per warning that covers it,
 /// each tagged with its severity level (1/2/3) for colour grouping.
 pub fn meteo_warnings(warn_json: &Value, teryt: &str) -> Vec<Warning> {
@@ -69,8 +79,8 @@ pub fn meteo_warnings(warn_json: &Value, teryt: &str) -> Vec<Warning> {
             let stopien = w.get("stopien").and_then(Value::as_str)?;
             let level = parse_level(stopien)?;
             let name = w.get("nazwa_zdarzenia").and_then(Value::as_str).unwrap_or("");
-            let from = w.get("obowiazuje_od").and_then(Value::as_str).unwrap_or("");
-            let until = w.get("obowiazuje_do").and_then(Value::as_str).unwrap_or("");
+            let from = drop_seconds(w.get("obowiazuje_od").and_then(Value::as_str).unwrap_or(""));
+            let until = drop_seconds(w.get("obowiazuje_do").and_then(Value::as_str).unwrap_or(""));
             Some(Warning {
                 level,
                 from: from.to_string(),
@@ -100,8 +110,8 @@ pub fn hydro_warnings(hydro_json: &Value, kod: &str) -> Vec<Warning> {
                 return None;
             }
             let name = w.get("zdarzenie").and_then(Value::as_str).unwrap_or("");
-            let from = w.get("data_od").and_then(Value::as_str).unwrap_or("");
-            let until = w.get("data_do").and_then(Value::as_str).unwrap_or("");
+            let from = drop_seconds(w.get("data_od").and_then(Value::as_str).unwrap_or(""));
+            let until = drop_seconds(w.get("data_do").and_then(Value::as_str).unwrap_or(""));
             Some(Warning {
                 level,
                 from: from.to_string(),
@@ -257,15 +267,15 @@ mod tests {
         assert_eq!(ws.len(), 2);
         assert!(ws.contains(&Warning {
             level: 3,
-            from: "2026-08-04 12:00:00".into(),
-            until: "2026-08-01 20:00:00".into(),
-            line: "Upał — level 3, from 2026-08-04 12:00:00 until 2026-08-01 20:00:00".into()
+            from: "2026-08-04 12:00".into(),
+            until: "2026-08-01 20:00".into(),
+            line: "Upał — level 3, from 2026-08-04 12:00 until 2026-08-01 20:00".into()
         }));
         assert!(ws.contains(&Warning {
             level: 2,
-            from: "2026-08-03 12:00:00".into(),
-            until: "2026-08-01 20:00:00".into(),
-            line: "Upał — level 2, from 2026-08-03 12:00:00 until 2026-08-01 20:00:00".into()
+            from: "2026-08-03 12:00".into(),
+            until: "2026-08-01 20:00".into(),
+            line: "Upał — level 2, from 2026-08-03 12:00 until 2026-08-01 20:00".into()
         }));
         assert!(meteo_warnings(&warn, "9999").is_empty());
     }
@@ -277,6 +287,13 @@ mod tests {
             until: until.into(),
             line: line.into(),
         }
+    }
+
+    #[test]
+    fn drop_seconds_trims_only_the_full_timestamp_shape() {
+        assert_eq!(drop_seconds("2026-08-06 20:00:00"), "2026-08-06 20:00");
+        assert_eq!(drop_seconds("2026-08-06 20:00"), "2026-08-06 20:00"); // already trimmed
+        assert_eq!(drop_seconds(""), "");
     }
 
     #[test]
@@ -338,9 +355,9 @@ mod tests {
             ws,
             vec![Warning {
                 level: 2,
-                from: "2026-08-03 14:10:00".into(),
-                until: "2026-08-03 22:00:00".into(),
-                line: "Gwałtowne wzrosty stanów wody — level 2, from 2026-08-03 14:10:00 until 2026-08-03 22:00:00".into()
+                from: "2026-08-03 14:10".into(),
+                until: "2026-08-03 22:00".into(),
+                line: "Gwałtowne wzrosty stanów wody — level 2, from 2026-08-03 14:10 until 2026-08-03 22:00".into()
             }]
         );
     }

@@ -130,7 +130,7 @@ fn happy_path_renders_forecast_and_both_warning_boxes() {
     assert_eq!(code, 0, "output was:\n{text}");
     // meteo warning box
     assert!(text.contains("WARNING!"), "{text}");
-    assert!(text.contains("Upał — level 3, from 2026-08-04 12:00:00 until 2026-08-06 20:00:00"), "{text}");
+    assert!(text.contains("Upał — level 3, from 2026-08-04 12:00 until 2026-08-06 20:00"), "{text}");
     // drought box, filtered to the point's basin
     assert!(text.contains("NOTICE"), "{text}");
     assert!(text.contains("Susza hydrologiczna (hydrological drought) — TestBasin basin"), "{text}");
