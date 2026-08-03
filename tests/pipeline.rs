@@ -95,7 +95,7 @@ fn happy_path_renders_forecast_and_both_warning_boxes() {
             .mock("GET", "/dane/warningsmeteo")
             .match_query(Matcher::Any)
             .with_body(
-                r#"[{"nazwa_zdarzenia":"Upał","stopien":"3","prawdopodobienstwo":"85","obowiazuje_od":"2099-01-04 12:00:00","obowiazuje_do":"2099-01-06 20:00:00","tresc":"Prognozuje się upały.","teryt":["1261","1201"]}]"#,
+                r#"[{"nazwa_zdarzenia":"Upał","stopien":"3","prawdopodobienstwo":"85","obowiazuje_od":"2099-01-04 12:00:00","obowiazuje_do":"2099-01-06 20:00:00","tresc":"Prognozuje się upały.","komentarz":"Brak.","teryt":["1261","1201"]}]"#,
             )
             .create(),
     );
@@ -133,6 +133,7 @@ fn happy_path_renders_forecast_and_both_warning_boxes() {
     assert!(text.contains("WARNING! (level 3, 85%)"), "{text}");
     assert!(text.contains("Upał — from 2099-01-04 12:00 until 2099-01-06 20:00"), "{text}");
     assert!(text.contains("Prognozuje się upały."), "{text}");
+    assert!(!text.contains("Brak"), "komentarz 'Brak.' must be dropped\n{text}");
     // drought box, filtered to the point's basin
     assert!(text.contains("NOTICE"), "{text}");
     assert!(text.contains("Susza hydrologiczna (hydrological drought) — TestBasin basin"), "{text}");

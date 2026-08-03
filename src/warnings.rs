@@ -55,6 +55,20 @@ fn parse_level(s: &str) -> Option<i64> {
     s.trim().parse().ok()
 }
 
+/// Merge a warning's main description (przebieg/tresc) with its remarks (komentarz),
+/// dropping remarks that are absent or "Brak" (Polish for "none"). Whitespace-trimmed.
+fn merge_desc(main: &str, comment: &str) -> String {
+    let main = main.trim();
+    let comment = comment.trim();
+    let comment_is_none =
+        comment.is_empty() || comment.trim_end_matches('.').eq_ignore_ascii_case("brak");
+    match (main.is_empty(), comment_is_none) {
+        (_, true) => main.to_string(),
+        (true, false) => comment.to_string(),
+        (false, false) => format!("{main} {comment}"),
+    }
+}
+
 /// Trim seconds off an IMGW timestamp: "YYYY-MM-DD HH:MM:SS" -> "YYYY-MM-DD HH:MM".
 /// Anything not in that exact shape is returned unchanged.
 fn drop_seconds(ts: &str) -> &str {
@@ -107,7 +121,10 @@ pub fn meteo_warnings(warn_json: &Value, teryt: &str, today: NaiveDate) -> Vec<W
             let prob = w.get("prawdopodobienstwo").and_then(Value::as_str).unwrap_or("");
             let from = drop_seconds(w.get("obowiazuje_od").and_then(Value::as_str).unwrap_or(""));
             let until = drop_seconds(w.get("obowiazuje_do").and_then(Value::as_str).unwrap_or(""));
-            let desc = w.get("tresc").and_then(Value::as_str).unwrap_or("").trim();
+            let desc = merge_desc(
+                w.get("tresc").and_then(Value::as_str).unwrap_or(""),
+                w.get("komentarz").and_then(Value::as_str).unwrap_or(""),
+            );
             let (from_disp, until_disp) = (humanize_ts(from, today), humanize_ts(until, today));
             Some(Warning {
                 level,
@@ -115,7 +132,7 @@ pub fn meteo_warnings(warn_json: &Value, teryt: &str, today: NaiveDate) -> Vec<W
                 from: from.to_string(),
                 until: until.to_string(),
                 headline: format!("{name} — from {from_disp} until {until_disp}"),
-                desc: desc.to_string(),
+                desc,
             })
         })
         .collect()
@@ -143,7 +160,10 @@ pub fn hydro_warnings(hydro_json: &Value, kod: &str, today: NaiveDate) -> Vec<Wa
             let prob = w.get("prawdopodobienstwo").and_then(Value::as_str).unwrap_or("");
             let from = drop_seconds(w.get("data_od").and_then(Value::as_str).unwrap_or(""));
             let until = drop_seconds(w.get("data_do").and_then(Value::as_str).unwrap_or(""));
-            let desc = w.get("przebieg").and_then(Value::as_str).unwrap_or("").trim();
+            let desc = merge_desc(
+                w.get("przebieg").and_then(Value::as_str).unwrap_or(""),
+                w.get("komentarz").and_then(Value::as_str).unwrap_or(""),
+            );
             let (from_disp, until_disp) = (humanize_ts(from, today), humanize_ts(until, today));
             Some(Warning {
                 level,
@@ -151,7 +171,7 @@ pub fn hydro_warnings(hydro_json: &Value, kod: &str, today: NaiveDate) -> Vec<Wa
                 from: from.to_string(),
                 until: until.to_string(),
                 headline: format!("{name} — from {from_disp} until {until_disp}"),
-                desc: desc.to_string(),
+                desc,
             })
         })
         .collect()
@@ -289,7 +309,7 @@ mod tests {
     fn meteo_warnings_filter_by_teryt_with_probability_and_description() {
         let warn: Value = serde_json::from_str(
             r#"[
-              {"nazwa_zdarzenia":"Upał","stopien":"3","prawdopodobienstwo":"85","obowiazuje_od":"2026-08-04 12:00:00","obowiazuje_do":"2026-08-01 20:00:00","tresc":"Prognozuje się upały.","teryt":["1206","1201"]},
+              {"nazwa_zdarzenia":"Upał","stopien":"3","prawdopodobienstwo":"85","obowiazuje_od":"2026-08-04 12:00:00","obowiazuje_do":"2026-08-01 20:00:00","tresc":"Prognozuje się upały.","komentarz":"Brak.","teryt":["1206","1201"]},
               {"nazwa_zdarzenia":"Burze","stopien":"1","prawdopodobienstwo":"70","obowiazuje_od":"2026-07-31 15:00:00","obowiazuje_do":"2026-07-31 21:00:00","tresc":"Burze z gradem.","teryt":["1465"]}
             ]"#,
         )
@@ -304,10 +324,22 @@ mod tests {
                 from: "2026-08-04 12:00".into(), // tomorrow
                 until: "2026-08-01 20:00".into(), // two days back -> absolute
                 headline: "Upał — from tomorrow 12:00 until 2026-08-01 20:00".into(),
-                desc: "Prognozuje się upały.".into(),
+                desc: "Prognozuje się upały.".into(), // komentarz "Brak." dropped
             }]
         );
         assert!(meteo_warnings(&warn, "9999", today).is_empty());
+    }
+
+    #[test]
+    fn merge_desc_appends_meaningful_remarks_and_drops_brak() {
+        assert_eq!(merge_desc("Upały.", "Brak."), "Upały.");
+        assert_eq!(merge_desc("Upały.", "brak"), "Upały.");
+        assert_eq!(merge_desc("Upały.", "  "), "Upały.");
+        assert_eq!(merge_desc("Upały.", "Możliwe podtopienia."), "Upały. Możliwe podtopienia.");
+        assert_eq!(merge_desc("", "Możliwe podtopienia."), "Możliwe podtopienia.");
+        assert_eq!(merge_desc("  Upały.  ", ""), "Upały.");
+        // "brak" as a substring of a real remark is kept
+        assert_eq!(merge_desc("X.", "Brak opadów."), "X. Brak opadów.");
     }
 
     fn w(level: i64, from: &str, until: &str, headline: &str) -> Warning {
@@ -365,7 +397,7 @@ mod tests {
             r#"[
               {"stopień":"-1","zdarzenie":"Susza hydrologiczna","data_do":"2026-09-01 00:00:00",
                "obszary":[{"kod_zlewni":["R_K_MP_1"]}]},
-              {"stopień":"2","zdarzenie":"Gwałtowne wzrosty stanów wody","prawdopodobienstwo":"80","data_od":"2026-08-03 14:10:00","data_do":"2026-08-03 22:00:00","przebieg":"Wzrosty stanów wody.",
+              {"stopień":"2","zdarzenie":"Gwałtowne wzrosty stanów wody","prawdopodobienstwo":"80","data_od":"2026-08-03 14:10:00","data_do":"2026-08-03 22:00:00","przebieg":"Wzrosty stanów wody.","komentarz":"Możliwe podtopienia.",
                "obszary":[{"kod_zlewni":["R_K_MP_1","R_K_MP_9"]}]},
               {"stopień":"1","zdarzenie":"Wezbranie","data_od":"2026-08-03 18:00:00","data_do":"2026-08-04 06:00:00",
                "obszary":[{"kod_zlewni":["R_K_MP_2"]}]}
@@ -375,7 +407,7 @@ mod tests {
         let today = NaiveDate::from_ymd_opt(2026, 8, 3).unwrap();
         let ws = hydro_warnings(&hydro, "R_K_MP_1", today);
         // only the level-2 warning covers R_K_MP_1; drought (-1) is excluded here.
-        // both timestamps are today -> shown as time only
+        // both timestamps are today -> shown as time only; przebieg + komentarz merged
         assert_eq!(
             ws,
             vec![Warning {
@@ -384,7 +416,7 @@ mod tests {
                 from: "2026-08-03 14:10".into(),
                 until: "2026-08-03 22:00".into(),
                 headline: "Gwałtowne wzrosty stanów wody — from 14:10 until 22:00".into(),
-                desc: "Wzrosty stanów wody.".into(),
+                desc: "Wzrosty stanów wody. Możliwe podtopienia.".into(),
             }]
         );
     }
