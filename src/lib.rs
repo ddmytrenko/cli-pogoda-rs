@@ -3,6 +3,7 @@
 //! point forecast, and prints it with any active meteorological and hydrological
 //! (drought) warnings for that exact point.
 
+pub mod client;
 pub mod config;
 pub mod forecast;
 pub mod geo;
@@ -12,6 +13,7 @@ pub mod ui;
 pub mod warnings;
 pub mod weather;
 
+use client::Client;
 use config::Config;
 use ui::Colors;
 
@@ -47,10 +49,10 @@ pub fn run() -> i32 {
         }
     };
 
-    let agent = http::agent();
+    let client = Client::new();
 
     // 1. Resolve to lat/lon + display name + timezone.
-    let loc = match geo::resolve(&agent, &place) {
+    let loc = match geo::resolve(&client, &place) {
         Ok(l) => l,
         Err(e) => {
             eprintln!("imgw: {e}");
@@ -62,17 +64,17 @@ pub fn run() -> i32 {
     let cache = config::cache_dir();
     let mut token = cache
         .as_deref()
-        .and_then(|d| imgw::token(&agent, d, false).ok())
+        .and_then(|d| imgw::token(&client, d, false).ok())
         .unwrap_or_else(|| imgw::FALLBACK_TOKEN.to_string());
 
-    let mut body = imgw::forecast(&agent, &token, loc.lat, loc.lon)
+    let mut body = imgw::forecast(&client, &token, loc.lat, loc.lon)
         .ok()
         .filter(|b| !b.trim().is_empty());
     if body.is_none() {
         if let Some(d) = cache.as_deref() {
-            if let Ok(t) = imgw::token(&agent, d, true) {
+            if let Ok(t) = imgw::token(&client, d, true) {
                 token = t;
-                body = imgw::forecast(&agent, &token, loc.lat, loc.lon)
+                body = imgw::forecast(&client, &token, loc.lat, loc.lon)
                     .ok()
                     .filter(|b| !b.trim().is_empty());
             }
@@ -101,7 +103,7 @@ pub fn run() -> i32 {
 
     // 3. Warning boxes, printed above the forecast: meteo (loud, red) then drought
     // (quiet, grey), each filtered to this exact point.
-    print_warnings(&agent, &colors, &token, &loc, cache.as_deref());
+    print_warnings(&client, &colors, &token, &loc, cache.as_deref());
 
     // 4. The forecast itself.
     print_forecast(&fc, &loc);
@@ -111,15 +113,15 @@ pub fn run() -> i32 {
 
 /// Print any warning boxes that apply to this point.
 fn print_warnings(
-    agent: &ureq::Agent,
+    client: &Client,
     colors: &Colors,
     token: &str,
     loc: &geo::Location,
     cache: Option<&std::path::Path>,
 ) {
     // Meteo warnings, filtered to this point's powiat TERYT.
-    if let Some(teryt) = imgw::reverse_teryt(agent, token, loc.lat, loc.lon) {
-        if let Some(raw) = imgw::danepubliczne(agent, "warningsmeteo") {
+    if let Some(teryt) = imgw::reverse_teryt(client, token, loc.lat, loc.lon) {
+        if let Some(raw) = imgw::danepubliczne(client, "warningsmeteo") {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
                 let lines = warnings::meteo_lines(&json, &teryt);
                 if !lines.is_empty() {
@@ -133,9 +135,9 @@ fn print_warnings(
 
     // Hydrological drought, filtered to this point's river basin.
     if let Some(cache) = cache {
-        if let Some(zlew) = imgw::ensure_zlew(agent, cache) {
+        if let Some(zlew) = imgw::ensure_zlew(client, cache) {
             if let Some(basin) = warnings::find_basin(&zlew, loc.lat, loc.lon) {
-                if let Some(raw) = imgw::danepubliczne(agent, "warningshydro") {
+                if let Some(raw) = imgw::danepubliczne(client, "warningshydro") {
                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
                         if warnings::drought_hits_basin(&json, &basin.kod) {
                             let line = format!(

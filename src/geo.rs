@@ -2,7 +2,7 @@
 //! lat/lon + display name + IANA timezone via external lookups: Open-Meteo forward
 //! geocoding for names, Open-Meteo + BigDataCloud for bare coordinates.
 
-use crate::http;
+use crate::client::Client;
 use anyhow::{anyhow, Result};
 use serde_json::Value;
 
@@ -31,39 +31,45 @@ pub fn parse_place(place: &str) -> Place {
     Place::Name(parts[0].to_string())
 }
 
-pub fn resolve(agent: &ureq::Agent, place: &str) -> Result<Location> {
+pub fn resolve(client: &Client, place: &str) -> Result<Location> {
     match parse_place(place) {
-        Place::Coords(lat, lon) => resolve_coords(agent, lat, lon),
-        Place::Name(town) => resolve_name(agent, &town),
+        Place::Coords(lat, lon) => resolve_coords(client, lat, lon),
+        Place::Name(town) => resolve_name(client, &town),
     }
 }
 
-fn resolve_coords(agent: &ureq::Agent, lat: f64, lon: f64) -> Result<Location> {
+fn resolve_coords(client: &Client, lat: f64, lon: f64) -> Result<Location> {
     let (lat_s, lon_s) = (lat.to_string(), lon.to_string());
 
     // timezone from Open-Meteo (auto), default UTC.
-    let tz = http::get_text(
-        agent,
-        "https://api.open-meteo.com/v1/forecast",
-        &[
-            ("latitude", lat_s.as_str()),
-            ("longitude", lon_s.as_str()),
-            ("timezone", "auto"),
-            ("forecast_days", "1"),
-        ],
-        3,
-    )
-    .ok()
-    .and_then(|b| serde_json::from_str::<Value>(&b).ok())
-    .and_then(|v| v.get("timezone").and_then(Value::as_str).map(String::from))
-    .filter(|s| !s.is_empty())
-    .unwrap_or_else(|| "UTC".to_string());
+    let tz = client
+        .get_text(
+            &client.endpoints.open_meteo,
+            &[
+                ("latitude", lat_s.as_str()),
+                ("longitude", lon_s.as_str()),
+                ("timezone", "auto"),
+                ("forecast_days", "1"),
+            ],
+            3,
+        )
+        .ok()
+        .and_then(|b| serde_json::from_str::<Value>(&b).ok())
+        .and_then(|v| v.get("timezone").and_then(Value::as_str).map(String::from))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "UTC".to_string());
 
     // display name from BigDataCloud reverse geocode, default "lat, lon".
-    let url = format!(
-        "https://api.bigdatacloud.net/data/reverse-geocode-client?latitude={lat}&longitude={lon}&localityLanguage=en"
-    );
-    let label = http::get_text(agent, &url, &[], 3)
+    let label = client
+        .get_text(
+            &client.endpoints.bigdatacloud,
+            &[
+                ("latitude", lat_s.as_str()),
+                ("longitude", lon_s.as_str()),
+                ("localityLanguage", "en"),
+            ],
+            3,
+        )
         .ok()
         .and_then(|b| serde_json::from_str::<Value>(&b).ok())
         .and_then(|v| {
@@ -81,19 +87,19 @@ fn resolve_coords(agent: &ureq::Agent, lat: f64, lon: f64) -> Result<Location> {
     Ok(Location { lat, lon, tz, label })
 }
 
-fn resolve_name(agent: &ureq::Agent, town: &str) -> Result<Location> {
-    let body = http::get_text(
-        agent,
-        "https://geocoding-api.open-meteo.com/v1/search",
-        &[
-            ("name", town),
-            ("count", "1"),
-            ("language", "en"),
-            ("format", "json"),
-        ],
-        3,
-    )
-    .map_err(|_| anyhow!("geocoding request failed"))?;
+fn resolve_name(client: &Client, town: &str) -> Result<Location> {
+    let body = client
+        .get_text(
+            &client.endpoints.geocoding,
+            &[
+                ("name", town),
+                ("count", "1"),
+                ("language", "en"),
+                ("format", "json"),
+            ],
+            3,
+        )
+        .map_err(|_| anyhow!("geocoding request failed"))?;
 
     let v: Value = serde_json::from_str(&body).map_err(|_| anyhow!("geocoding request failed"))?;
     let first = v
@@ -140,7 +146,7 @@ mod tests {
 
     #[test]
     fn coords_tolerate_whitespace() {
-        matches!(parse_place("  52.24 , 21.03 "), Place::Coords(_, _));
+        assert!(matches!(parse_place("  52.24 , 21.03 "), Place::Coords(_, _)));
     }
 
     #[test]
