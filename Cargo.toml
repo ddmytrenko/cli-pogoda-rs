@@ -2,7 +2,7 @@
 name = "imgw-rs"
 version = "0.1.0"
 edition = "2021"
-description = "IMGW-PIB point weather nowcast for the terminal (a Rust port of the zsh `imgw` command)"
+description = "IMGW-PIB point weather nowcast for the terminal"
 license = "MIT"
 
 [[bin]]
