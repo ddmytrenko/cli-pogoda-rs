@@ -66,10 +66,11 @@ pub fn meteo_warnings(warn_json: &Value, teryt: &str) -> Vec<Warning> {
             let stopien = w.get("stopien").and_then(Value::as_str)?;
             let level = parse_level(stopien)?;
             let name = w.get("nazwa_zdarzenia").and_then(Value::as_str).unwrap_or("");
+            let from = w.get("obowiazuje_od").and_then(Value::as_str).unwrap_or("");
             let until = w.get("obowiazuje_do").and_then(Value::as_str).unwrap_or("");
             Some(Warning {
                 level,
-                line: format!("{name} — level {stopien}, until {until}"),
+                line: format!("{name} — level {stopien}, from {from} until {until}"),
             })
         })
         .collect()
@@ -94,10 +95,11 @@ pub fn hydro_warnings(hydro_json: &Value, kod: &str) -> Vec<Warning> {
                 return None;
             }
             let name = w.get("zdarzenie").and_then(Value::as_str).unwrap_or("");
+            let from = w.get("data_od").and_then(Value::as_str).unwrap_or("");
             let until = w.get("data_do").and_then(Value::as_str).unwrap_or("");
             Some(Warning {
                 level,
-                line: format!("{name} — level {stopien}, until {until}"),
+                line: format!("{name} — level {stopien}, from {from} until {until}"),
             })
         })
         .collect()
@@ -239,9 +241,9 @@ mod tests {
     fn meteo_warnings_filter_by_teryt_and_carry_level() {
         let warn: Value = serde_json::from_str(
             r#"[
-              {"nazwa_zdarzenia":"Upał","stopien":"3","obowiazuje_do":"2026-08-01 20:00:00","teryt":["1206","1201"]},
-              {"nazwa_zdarzenia":"Upał","stopien":"2","obowiazuje_do":"2026-08-01 20:00:00","teryt":["1206"]},
-              {"nazwa_zdarzenia":"Burze","stopien":"1","obowiazuje_do":"2026-07-31 21:00:00","teryt":["1465"]}
+              {"nazwa_zdarzenia":"Upał","stopien":"3","obowiazuje_od":"2026-08-04 12:00:00","obowiazuje_do":"2026-08-01 20:00:00","teryt":["1206","1201"]},
+              {"nazwa_zdarzenia":"Upał","stopien":"2","obowiazuje_od":"2026-08-03 12:00:00","obowiazuje_do":"2026-08-01 20:00:00","teryt":["1206"]},
+              {"nazwa_zdarzenia":"Burze","stopien":"1","obowiazuje_od":"2026-07-31 15:00:00","obowiazuje_do":"2026-07-31 21:00:00","teryt":["1465"]}
             ]"#,
         )
         .unwrap();
@@ -249,11 +251,11 @@ mod tests {
         assert_eq!(ws.len(), 2);
         assert!(ws.contains(&Warning {
             level: 3,
-            line: "Upał — level 3, until 2026-08-01 20:00:00".into()
+            line: "Upał — level 3, from 2026-08-04 12:00:00 until 2026-08-01 20:00:00".into()
         }));
         assert!(ws.contains(&Warning {
             level: 2,
-            line: "Upał — level 2, until 2026-08-01 20:00:00".into()
+            line: "Upał — level 2, from 2026-08-03 12:00:00 until 2026-08-01 20:00:00".into()
         }));
         assert!(meteo_warnings(&warn, "9999").is_empty());
     }
@@ -281,9 +283,9 @@ mod tests {
             r#"[
               {"stopień":"-1","zdarzenie":"Susza hydrologiczna","data_do":"2026-09-01 00:00:00",
                "obszary":[{"kod_zlewni":["R_K_MP_1"]}]},
-              {"stopień":"2","zdarzenie":"Gwałtowne wzrosty stanów wody","data_do":"2026-08-03 22:00:00",
+              {"stopień":"2","zdarzenie":"Gwałtowne wzrosty stanów wody","data_od":"2026-08-03 14:10:00","data_do":"2026-08-03 22:00:00",
                "obszary":[{"kod_zlewni":["R_K_MP_1","R_K_MP_9"]}]},
-              {"stopień":"1","zdarzenie":"Wezbranie","data_do":"2026-08-04 06:00:00",
+              {"stopień":"1","zdarzenie":"Wezbranie","data_od":"2026-08-03 18:00:00","data_do":"2026-08-04 06:00:00",
                "obszary":[{"kod_zlewni":["R_K_MP_2"]}]}
             ]"#,
         )
@@ -294,7 +296,7 @@ mod tests {
             ws,
             vec![Warning {
                 level: 2,
-                line: "Gwałtowne wzrosty stanów wody — level 2, until 2026-08-03 22:00:00".into()
+                line: "Gwałtowne wzrosty stanów wody — level 2, from 2026-08-03 14:10:00 until 2026-08-03 22:00:00".into()
             }]
         );
     }
