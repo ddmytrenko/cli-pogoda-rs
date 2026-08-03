@@ -37,10 +37,13 @@ pub fn point_in_ring(ring: &[Vec<f64>], lon: f64, lat: f64) -> bool {
     inside
 }
 
-/// A single warning: its severity `level` and its rendered display `line`.
+/// A single warning: its severity `level`, validity window (`from`/`until`, kept for
+/// sorting), and its rendered display `line`.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Warning {
     pub level: i64,
+    pub from: String,
+    pub until: String,
     pub line: String,
 }
 
@@ -70,6 +73,8 @@ pub fn meteo_warnings(warn_json: &Value, teryt: &str) -> Vec<Warning> {
             let until = w.get("obowiazuje_do").and_then(Value::as_str).unwrap_or("");
             Some(Warning {
                 level,
+                from: from.to_string(),
+                until: until.to_string(),
                 line: format!("{name} — level {stopien}, from {from} until {until}"),
             })
         })
@@ -99,6 +104,8 @@ pub fn hydro_warnings(hydro_json: &Value, kod: &str) -> Vec<Warning> {
             let until = w.get("data_do").and_then(Value::as_str).unwrap_or("");
             Some(Warning {
                 level,
+                from: from.to_string(),
+                until: until.to_string(),
                 line: format!("{name} — level {stopien}, from {from} until {until}"),
             })
         })
@@ -121,17 +128,16 @@ fn hydro_covers_basin(w: &Value, kod: &str) -> bool {
 }
 
 /// Group warnings into boxes by severity, highest first: returns `(level, lines)` for
-/// each of levels 3, 2, 1 that has any warnings.
+/// each of levels 3, 2, 1 that has any warnings. Within a box, lines are ordered
+/// closest-first: earliest start, then earliest end (the ISO-like timestamps sort
+/// chronologically as plain strings).
 pub fn boxes_by_level(warnings: &[Warning]) -> Vec<(i64, Vec<String>)> {
     let mut out = Vec::new();
     for level in [3, 2, 1] {
-        let lines: Vec<String> = warnings
-            .iter()
-            .filter(|w| w.level == level)
-            .map(|w| w.line.clone())
-            .collect();
-        if !lines.is_empty() {
-            out.push((level, lines));
+        let mut group: Vec<&Warning> = warnings.iter().filter(|w| w.level == level).collect();
+        group.sort_by(|a, b| (&a.from, &a.until).cmp(&(&b.from, &b.until)));
+        if !group.is_empty() {
+            out.push((level, group.iter().map(|w| w.line.clone()).collect()));
         }
     }
     out
@@ -251,21 +257,34 @@ mod tests {
         assert_eq!(ws.len(), 2);
         assert!(ws.contains(&Warning {
             level: 3,
+            from: "2026-08-04 12:00:00".into(),
+            until: "2026-08-01 20:00:00".into(),
             line: "Upał — level 3, from 2026-08-04 12:00:00 until 2026-08-01 20:00:00".into()
         }));
         assert!(ws.contains(&Warning {
             level: 2,
+            from: "2026-08-03 12:00:00".into(),
+            until: "2026-08-01 20:00:00".into(),
             line: "Upał — level 2, from 2026-08-03 12:00:00 until 2026-08-01 20:00:00".into()
         }));
         assert!(meteo_warnings(&warn, "9999").is_empty());
     }
 
+    fn w(level: i64, from: &str, until: &str, line: &str) -> Warning {
+        Warning {
+            level,
+            from: from.into(),
+            until: until.into(),
+            line: line.into(),
+        }
+    }
+
     #[test]
     fn boxes_by_level_groups_highest_first() {
         let ws = vec![
-            Warning { level: 1, line: "a".into() },
-            Warning { level: 3, line: "b".into() },
-            Warning { level: 1, line: "c".into() },
+            w(1, "2026-01-01 00:00:00", "2026-01-02 00:00:00", "a"),
+            w(3, "2026-01-01 00:00:00", "2026-01-02 00:00:00", "b"),
+            w(1, "2026-01-03 00:00:00", "2026-01-04 00:00:00", "c"),
         ];
         let boxes = boxes_by_level(&ws);
         assert_eq!(
@@ -274,6 +293,29 @@ mod tests {
                 (3, vec!["b".to_string()]),
                 (1, vec!["a".to_string(), "c".to_string()]),
             ]
+        );
+    }
+
+    #[test]
+    fn boxes_by_level_sorts_lines_closest_first() {
+        // Same level, given out of order; expect earliest `from` first, then earliest
+        // `until` as the tie-breaker.
+        let ws = vec![
+            w(2, "2026-08-05 00:00:00", "2026-08-06 00:00:00", "later-start"),
+            w(2, "2026-08-03 00:00:00", "2026-08-09 00:00:00", "early-start-late-end"),
+            w(2, "2026-08-03 00:00:00", "2026-08-04 00:00:00", "early-start-early-end"),
+        ];
+        let boxes = boxes_by_level(&ws);
+        assert_eq!(
+            boxes,
+            vec![(
+                2,
+                vec![
+                    "early-start-early-end".to_string(),
+                    "early-start-late-end".to_string(),
+                    "later-start".to_string(),
+                ]
+            )]
         );
     }
 
@@ -296,6 +338,8 @@ mod tests {
             ws,
             vec![Warning {
                 level: 2,
+                from: "2026-08-03 14:10:00".into(),
+                until: "2026-08-03 22:00:00".into(),
                 line: "Gwałtowne wzrosty stanów wody — level 2, from 2026-08-03 14:10:00 until 2026-08-03 22:00:00".into()
             }]
         );
