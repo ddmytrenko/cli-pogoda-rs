@@ -95,7 +95,7 @@ fn happy_path_renders_forecast_and_both_warning_boxes() {
             .mock("GET", "/dane/warningsmeteo")
             .match_query(Matcher::Any)
             .with_body(
-                r#"[{"nazwa_zdarzenia":"Upał","stopien":"3","obowiazuje_od":"2099-01-04 12:00:00","obowiazuje_do":"2099-01-06 20:00:00","teryt":["1261","1201"]}]"#,
+                r#"[{"nazwa_zdarzenia":"Upał","stopien":"3","prawdopodobienstwo":"85","obowiazuje_od":"2099-01-04 12:00:00","obowiazuje_do":"2099-01-06 20:00:00","tresc":"Prognozuje się upały.","teryt":["1261","1201"]}]"#,
             )
             .create(),
     );
@@ -128,9 +128,11 @@ fn happy_path_renders_forecast_and_both_warning_boxes() {
     let text = String::from_utf8(out).unwrap();
 
     assert_eq!(code, 0, "output was:\n{text}");
-    // meteo warning box: severity in the caption, event + window on the line
-    assert!(text.contains("WARNING! (level 3)"), "{text}");
+    // meteo warning box: level + probability in the caption, event/window headline,
+    // description wrapped inside
+    assert!(text.contains("WARNING! (level 3, 85%)"), "{text}");
     assert!(text.contains("Upał — from 2099-01-04 12:00 until 2099-01-06 20:00"), "{text}");
+    assert!(text.contains("Prognozuje się upały."), "{text}");
     // drought box, filtered to the point's basin
     assert!(text.contains("NOTICE"), "{text}");
     assert!(text.contains("Susza hydrologiczna (hydrological drought) — TestBasin basin"), "{text}");

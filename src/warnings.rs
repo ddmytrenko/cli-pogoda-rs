@@ -38,14 +38,17 @@ pub fn point_in_ring(ring: &[Vec<f64>], lon: f64, lat: f64) -> bool {
     inside
 }
 
-/// A single warning: its severity `level`, validity window (`from`/`until`, kept for
-/// sorting), and its rendered display `line`.
+/// A single warning, rendered as its own box: `level` + `prob` go in the caption,
+/// `headline` is the first body line, `desc` (if any) wraps below it. `from`/`until`
+/// are the trimmed raw timestamps kept as the display sort key.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Warning {
     pub level: i64,
+    pub prob: String, // probability without "%", "" if none
     pub from: String,
     pub until: String,
-    pub line: String,
+    pub headline: String, // "<event> — from <start> until <end>"
+    pub desc: String,     // free-text description, "" if none
 }
 
 fn parse_level(s: &str) -> Option<i64> {
@@ -101,14 +104,18 @@ pub fn meteo_warnings(warn_json: &Value, teryt: &str, today: NaiveDate) -> Vec<W
             let stopien = w.get("stopien").and_then(Value::as_str)?;
             let level = parse_level(stopien)?;
             let name = w.get("nazwa_zdarzenia").and_then(Value::as_str).unwrap_or("");
+            let prob = w.get("prawdopodobienstwo").and_then(Value::as_str).unwrap_or("");
             let from = drop_seconds(w.get("obowiazuje_od").and_then(Value::as_str).unwrap_or(""));
             let until = drop_seconds(w.get("obowiazuje_do").and_then(Value::as_str).unwrap_or(""));
+            let desc = w.get("tresc").and_then(Value::as_str).unwrap_or("").trim();
             let (from_disp, until_disp) = (humanize_ts(from, today), humanize_ts(until, today));
             Some(Warning {
                 level,
+                prob: prob.to_string(),
                 from: from.to_string(),
                 until: until.to_string(),
-                line: format!("{name} — from {from_disp} until {until_disp}"),
+                headline: format!("{name} — from {from_disp} until {until_disp}"),
+                desc: desc.to_string(),
             })
         })
         .collect()
@@ -133,14 +140,18 @@ pub fn hydro_warnings(hydro_json: &Value, kod: &str, today: NaiveDate) -> Vec<Wa
                 return None;
             }
             let name = w.get("zdarzenie").and_then(Value::as_str).unwrap_or("");
+            let prob = w.get("prawdopodobienstwo").and_then(Value::as_str).unwrap_or("");
             let from = drop_seconds(w.get("data_od").and_then(Value::as_str).unwrap_or(""));
             let until = drop_seconds(w.get("data_do").and_then(Value::as_str).unwrap_or(""));
+            let desc = w.get("przebieg").and_then(Value::as_str).unwrap_or("").trim();
             let (from_disp, until_disp) = (humanize_ts(from, today), humanize_ts(until, today));
             Some(Warning {
                 level,
+                prob: prob.to_string(),
                 from: from.to_string(),
                 until: until.to_string(),
-                line: format!("{name} — from {from_disp} until {until_disp}"),
+                headline: format!("{name} — from {from_disp} until {until_disp}"),
+                desc: desc.to_string(),
             })
         })
         .collect()
@@ -161,20 +172,17 @@ fn hydro_covers_basin(w: &Value, kod: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Group warnings into boxes by severity, highest first: returns `(level, lines)` for
-/// each of levels 3, 2, 1 that has any warnings. Within a box, lines are ordered
-/// closest-first: earliest start, then earliest end (the ISO-like timestamps sort
-/// chronologically as plain strings).
-pub fn boxes_by_level(warnings: &[Warning]) -> Vec<(i64, Vec<String>)> {
-    let mut out = Vec::new();
-    for level in [3, 2, 1] {
-        let mut group: Vec<&Warning> = warnings.iter().filter(|w| w.level == level).collect();
-        group.sort_by(|a, b| (&a.from, &a.until).cmp(&(&b.from, &b.until)));
-        if !group.is_empty() {
-            out.push((level, group.iter().map(|w| w.line.clone()).collect()));
-        }
-    }
-    out
+/// Order warnings for display: highest severity first, and within a severity
+/// closest-first (earliest start, then earliest end — the ISO-like timestamps sort
+/// chronologically as plain strings). Each warning is rendered as its own box.
+pub fn ordered_for_display(mut warnings: Vec<Warning>) -> Vec<Warning> {
+    warnings.sort_by(|a, b| {
+        b.level
+            .cmp(&a.level)
+            .then_with(|| a.from.cmp(&b.from))
+            .then_with(|| a.until.cmp(&b.until))
+    });
+    warnings
 }
 
 /// A river basin, identified by its KOD and human NAZWA.
@@ -278,41 +286,38 @@ mod tests {
     }
 
     #[test]
-    fn meteo_warnings_filter_by_teryt_and_carry_level() {
+    fn meteo_warnings_filter_by_teryt_with_probability_and_description() {
         let warn: Value = serde_json::from_str(
             r#"[
-              {"nazwa_zdarzenia":"Upał","stopien":"3","obowiazuje_od":"2026-08-04 12:00:00","obowiazuje_do":"2026-08-01 20:00:00","teryt":["1206","1201"]},
-              {"nazwa_zdarzenia":"Upał","stopien":"2","obowiazuje_od":"2026-08-03 12:00:00","obowiazuje_do":"2026-08-01 20:00:00","teryt":["1206"]},
-              {"nazwa_zdarzenia":"Burze","stopien":"1","obowiazuje_od":"2026-07-31 15:00:00","obowiazuje_do":"2026-07-31 21:00:00","teryt":["1465"]}
+              {"nazwa_zdarzenia":"Upał","stopien":"3","prawdopodobienstwo":"85","obowiazuje_od":"2026-08-04 12:00:00","obowiazuje_do":"2026-08-01 20:00:00","tresc":"Prognozuje się upały.","teryt":["1206","1201"]},
+              {"nazwa_zdarzenia":"Burze","stopien":"1","prawdopodobienstwo":"70","obowiazuje_od":"2026-07-31 15:00:00","obowiazuje_do":"2026-07-31 21:00:00","tresc":"Burze z gradem.","teryt":["1465"]}
             ]"#,
         )
         .unwrap();
         let today = NaiveDate::from_ymd_opt(2026, 8, 3).unwrap();
         let ws = meteo_warnings(&warn, "1206", today);
-        assert_eq!(ws.len(), 2);
-        // from is tomorrow (08-04); until is 08-01, two days back -> shown absolute
-        assert!(ws.contains(&Warning {
-            level: 3,
-            from: "2026-08-04 12:00".into(),
-            until: "2026-08-01 20:00".into(),
-            line: "Upał — from tomorrow 12:00 until 2026-08-01 20:00".into()
-        }));
-        // from is today (08-03) -> time only
-        assert!(ws.contains(&Warning {
-            level: 2,
-            from: "2026-08-03 12:00".into(),
-            until: "2026-08-01 20:00".into(),
-            line: "Upał — from 12:00 until 2026-08-01 20:00".into()
-        }));
+        assert_eq!(
+            ws,
+            vec![Warning {
+                level: 3,
+                prob: "85".into(),
+                from: "2026-08-04 12:00".into(), // tomorrow
+                until: "2026-08-01 20:00".into(), // two days back -> absolute
+                headline: "Upał — from tomorrow 12:00 until 2026-08-01 20:00".into(),
+                desc: "Prognozuje się upały.".into(),
+            }]
+        );
         assert!(meteo_warnings(&warn, "9999", today).is_empty());
     }
 
-    fn w(level: i64, from: &str, until: &str, line: &str) -> Warning {
+    fn w(level: i64, from: &str, until: &str, headline: &str) -> Warning {
         Warning {
             level,
+            prob: String::new(),
             from: from.into(),
             until: until.into(),
-            line: line.into(),
+            headline: headline.into(),
+            desc: String::new(),
         }
     }
 
@@ -335,42 +340,22 @@ mod tests {
     }
 
     #[test]
-    fn boxes_by_level_groups_highest_first() {
+    fn ordered_for_display_is_severity_desc_then_closest_first() {
+        // Highest level first; within a level earliest start, then earliest end.
         let ws = vec![
-            w(1, "2026-01-01 00:00:00", "2026-01-02 00:00:00", "a"),
-            w(3, "2026-01-01 00:00:00", "2026-01-02 00:00:00", "b"),
-            w(1, "2026-01-03 00:00:00", "2026-01-04 00:00:00", "c"),
+            w(1, "2026-08-01 00:00", "2026-08-02 00:00", "l1"),
+            w(2, "2026-08-05 00:00", "2026-08-06 00:00", "l2-late"),
+            w(3, "2026-08-01 00:00", "2026-08-02 00:00", "l3"),
+            w(2, "2026-08-03 00:00", "2026-08-09 00:00", "l2-early-lateend"),
+            w(2, "2026-08-03 00:00", "2026-08-04 00:00", "l2-early-earlyend"),
         ];
-        let boxes = boxes_by_level(&ws);
+        let ordered: Vec<String> = ordered_for_display(ws)
+            .into_iter()
+            .map(|w| w.headline)
+            .collect();
         assert_eq!(
-            boxes,
-            vec![
-                (3, vec!["b".to_string()]),
-                (1, vec!["a".to_string(), "c".to_string()]),
-            ]
-        );
-    }
-
-    #[test]
-    fn boxes_by_level_sorts_lines_closest_first() {
-        // Same level, given out of order; expect earliest `from` first, then earliest
-        // `until` as the tie-breaker.
-        let ws = vec![
-            w(2, "2026-08-05 00:00:00", "2026-08-06 00:00:00", "later-start"),
-            w(2, "2026-08-03 00:00:00", "2026-08-09 00:00:00", "early-start-late-end"),
-            w(2, "2026-08-03 00:00:00", "2026-08-04 00:00:00", "early-start-early-end"),
-        ];
-        let boxes = boxes_by_level(&ws);
-        assert_eq!(
-            boxes,
-            vec![(
-                2,
-                vec![
-                    "early-start-early-end".to_string(),
-                    "early-start-late-end".to_string(),
-                    "later-start".to_string(),
-                ]
-            )]
+            ordered,
+            vec!["l3", "l2-early-earlyend", "l2-early-lateend", "l2-late", "l1"]
         );
     }
 
@@ -380,7 +365,7 @@ mod tests {
             r#"[
               {"stopień":"-1","zdarzenie":"Susza hydrologiczna","data_do":"2026-09-01 00:00:00",
                "obszary":[{"kod_zlewni":["R_K_MP_1"]}]},
-              {"stopień":"2","zdarzenie":"Gwałtowne wzrosty stanów wody","data_od":"2026-08-03 14:10:00","data_do":"2026-08-03 22:00:00",
+              {"stopień":"2","zdarzenie":"Gwałtowne wzrosty stanów wody","prawdopodobienstwo":"80","data_od":"2026-08-03 14:10:00","data_do":"2026-08-03 22:00:00","przebieg":"Wzrosty stanów wody.",
                "obszary":[{"kod_zlewni":["R_K_MP_1","R_K_MP_9"]}]},
               {"stopień":"1","zdarzenie":"Wezbranie","data_od":"2026-08-03 18:00:00","data_do":"2026-08-04 06:00:00",
                "obszary":[{"kod_zlewni":["R_K_MP_2"]}]}
@@ -395,9 +380,11 @@ mod tests {
             ws,
             vec![Warning {
                 level: 2,
+                prob: "80".into(),
                 from: "2026-08-03 14:10".into(),
                 until: "2026-08-03 22:00".into(),
-                line: "Gwałtowne wzrosty stanów wody — from 14:10 until 22:00".into()
+                headline: "Gwałtowne wzrosty stanów wody — from 14:10 until 22:00".into(),
+                desc: "Wzrosty stanów wody.".into(),
             }]
         );
     }

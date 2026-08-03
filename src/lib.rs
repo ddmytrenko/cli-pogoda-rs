@@ -125,6 +125,26 @@ pub fn run_place(
     0
 }
 
+/// Max characters per line when wrapping a warning's description.
+const DESC_WRAP_WIDTH: usize = 72;
+
+/// Render one warning as a coloured box: level + probability in the caption, the
+/// event/window headline first, then the wrapped description (if any).
+fn emit_warning_box(w: &warnings::Warning, colors: &Colors, out: &mut impl Write) {
+    let caption = if w.prob.is_empty() {
+        format!("WARNING! (level {})", w.level)
+    } else {
+        format!("WARNING! (level {}, {}%)", w.level, w.prob)
+    };
+    let mut body = vec![w.headline.clone()];
+    if !w.desc.is_empty() {
+        body.extend(ui::wrap(&w.desc, DESC_WRAP_WIDTH));
+    }
+    for l in ui::warn_box(colors.level(w.level), &colors.reset, &caption, &body) {
+        let _ = writeln!(out, "{l}");
+    }
+}
+
 /// Write any warning boxes that apply to this point.
 fn print_warnings(
     client: &Client,
@@ -139,17 +159,14 @@ fn print_warnings(
         .with_timezone(&chrono_tz::Europe::Warsaw)
         .date_naive();
 
-    // Meteo warnings, filtered to this point's powiat TERYT, one box per severity
-    // level (3=red, 2=orange, 1=yellow), highest first.
+    // Meteo warnings, filtered to this point's powiat TERYT: one box per warning,
+    // coloured by level (3=red, 2=orange, 1=yellow), highest severity first.
     if let Some(teryt) = imgw::reverse_teryt(client, token, loc.lat, loc.lon) {
         if let Some(raw) = imgw::danepubliczne(client, "warningsmeteo") {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
-                let ws = warnings::meteo_warnings(&json, &teryt, today);
-                for (level, lines) in warnings::boxes_by_level(&ws) {
-                    let caption = format!("WARNING! (level {level})");
-                    for l in ui::warn_box(colors.level(level), &colors.reset, &caption, &lines) {
-                        let _ = writeln!(out, "{l}");
-                    }
+                let ws = warnings::ordered_for_display(warnings::meteo_warnings(&json, &teryt, today));
+                for w in &ws {
+                    emit_warning_box(w, colors, out);
                 }
             }
         }
@@ -163,13 +180,13 @@ fn print_warnings(
             if let Some(basin) = warnings::find_basin(&zlew, loc.lat, loc.lon) {
                 if let Some(raw) = imgw::danepubliczne(client, "warningshydro") {
                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
-                        let ws = warnings::hydro_warnings(&json, &basin.kod, today);
-                        for (level, lines) in warnings::boxes_by_level(&ws) {
-                            let caption = format!("WARNING! (level {level})");
-                            for l in ui::warn_box(colors.level(level), &colors.reset, &caption, &lines)
-                            {
-                                let _ = writeln!(out, "{l}");
-                            }
+                        let ws = warnings::ordered_for_display(warnings::hydro_warnings(
+                            &json,
+                            &basin.kod,
+                            today,
+                        ));
+                        for w in &ws {
+                            emit_warning_box(w, colors, out);
                         }
                         if warnings::drought_hits_basin(&json, &basin.kod) {
                             let line = format!(

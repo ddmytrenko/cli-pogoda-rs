@@ -78,6 +78,28 @@ pub fn warn_box(col: &str, rst: &str, caption: &str, body: &[String]) -> Vec<Str
     out
 }
 
+/// Word-wrap `text` to at most `width` characters per line, breaking on whitespace.
+/// A word longer than `width` gets its own (over-long) line. Empty text -> no lines.
+pub fn wrap(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut cur = String::new();
+    for word in text.split_whitespace() {
+        if cur.is_empty() {
+            cur.push_str(word);
+        } else if cur.chars().count() + 1 + word.chars().count() <= width {
+            cur.push(' ');
+            cur.push_str(word);
+        } else {
+            lines.push(std::mem::take(&mut cur));
+            cur.push_str(word);
+        }
+    }
+    if !cur.is_empty() {
+        lines.push(cur);
+    }
+    lines
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,5 +136,15 @@ mod tests {
         for l in &lines {
             assert_eq!(l.chars().count(), w);
         }
+    }
+
+    #[test]
+    fn wrap_breaks_on_spaces_within_width() {
+        assert!(wrap("", 10).is_empty());
+        assert_eq!(wrap("one two three", 7), vec!["one two", "three"]);
+        // a word longer than the width gets its own (over-long) line
+        assert_eq!(wrap("aaaaaaaaaa bb", 5), vec!["aaaaaaaaaa", "bb"]);
+        // wide chars counted by char, not byte
+        assert_eq!(wrap("30°C do 33°C", 6), vec!["30°C", "do", "33°C"]);
     }
 }
