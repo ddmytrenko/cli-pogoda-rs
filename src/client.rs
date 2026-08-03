@@ -4,6 +4,7 @@
 
 use crate::http::{self, Backoff};
 use anyhow::Result;
+use serde::Serialize;
 use std::path::Path;
 
 /// Base URLs for the external services the app talks to.
@@ -11,8 +12,8 @@ use std::path::Path;
 pub struct Endpoints {
     /// meteo.imgw.pl base (token bundle, forecast, reverse geocode, basin polygons).
     pub meteo: String,
-    /// danepubliczne warnings-products base (a `/<product>` is appended).
-    pub danepubliczne: String,
+    /// Public-data warning-feeds base (a `/<product>` is appended).
+    pub warnings: String,
     /// Open-Meteo point forecast (used only for a coordinate's timezone).
     pub open_meteo: String,
     /// Open-Meteo forward geocoding (name -> lat/lon + timezone).
@@ -25,7 +26,7 @@ impl Default for Endpoints {
     fn default() -> Self {
         Endpoints {
             meteo: "https://meteo.imgw.pl".into(),
-            danepubliczne: "https://danepubliczne.imgw.pl/api/data".into(),
+            warnings: "https://danepubliczne.imgw.pl/api/data".into(),
             open_meteo: "https://api.open-meteo.com/v1/forecast".into(),
             geocoding: "https://geocoding-api.open-meteo.com/v1/search".into(),
             bigdatacloud: "https://api.bigdatacloud.net/data/reverse-geocode-client".into(),
@@ -64,15 +65,23 @@ impl Client {
         }
     }
 
-    /// GET a URL with query params, retrying per the backoff policy; body as a string.
-    pub fn get_text(&self, url: &str, params: &[(&str, &str)], tries: u32) -> Result<String> {
+    /// GET a URL (no query), retrying per the backoff policy; body as a string.
+    pub fn get(&self, url: &str, tries: u32) -> Result<String> {
         http::retry_with(tries, &self.backoff, || {
-            let mut req = self.agent.get(url);
-            for (k, v) in params {
-                req = req.query(k, v);
-            }
-            Ok(req.call()?.into_string()?)
+            Ok(self.agent.get(url).call()?.into_string()?)
         })
+    }
+
+    /// GET a URL with a typed query (serialized to the query string), retrying; body as
+    /// a string.
+    pub fn get_query<Q: Serialize>(&self, url: &str, query: &Q, tries: u32) -> Result<String> {
+        let qs = serde_urlencoded::to_string(query)?;
+        let full = if qs.is_empty() {
+            url.to_string()
+        } else {
+            format!("{url}?{qs}")
+        };
+        self.get(&full, tries)
     }
 
     /// GET a URL (retrying) and stream the body into `path`. Used for large payloads.

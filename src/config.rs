@@ -26,7 +26,11 @@ impl Config {
     fn parse_into(text: &str, map: &mut HashMap<String, String>) {
         for line in text.lines() {
             let line = line.trim();
-            if line.is_empty() || line.starts_with('#') || line.starts_with(';') || line.starts_with('[') {
+            if line.is_empty()
+                || line.starts_with('#')
+                || line.starts_with(';')
+                || line.starts_with('[')
+            {
                 continue;
             }
             if let Some((k, v)) = line.split_once('=') {
@@ -85,7 +89,10 @@ mod tests {
             "# a comment\n[section]\nweather_place = Warsaw,PL\n; semi comment\nempty=\n",
             &mut m,
         );
-        assert_eq!(m.get("weather_place").map(String::as_str), Some("Warsaw,PL"));
+        assert_eq!(
+            m.get("weather_place").map(String::as_str),
+            Some("Warsaw,PL")
+        );
         assert_eq!(m.get("empty").map(String::as_str), Some(""));
     }
 
@@ -93,6 +100,9 @@ mod tests {
     fn strips_surrounding_quotes_and_lowercases_key() {
         let mut m = HashMap::new();
         Config::parse_into("Weather_Place = \"52.24, 21.03\"\n", &mut m);
-        assert_eq!(m.get("weather_place").map(String::as_str), Some("52.24, 21.03"));
+        assert_eq!(
+            m.get("weather_place").map(String::as_str),
+            Some("52.24, 21.03")
+        );
     }
 }

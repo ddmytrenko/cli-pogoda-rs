@@ -4,8 +4,8 @@
 //! one, so the two cadences don't double-count rain. Pure: takes the JSON text,
 //! returns a Forecast.
 
+use crate::model::{ForecastResponse, ForecastStep};
 use anyhow::{anyhow, Result};
-use serde_json::Value;
 
 #[derive(Debug, Default)]
 pub struct Forecast {
@@ -29,82 +29,58 @@ pub struct Forecast {
     pub hrs: f64, // span of the step window, hours
 }
 
-/// Field as a display string ("" when missing/null; numbers stringified).
-fn vstr(v: &Value, key: &str) -> String {
-    match v.get(key) {
-        Some(Value::String(s)) => s.clone(),
-        Some(Value::Number(n)) => n.to_string(),
-        _ => String::new(),
-    }
-}
-
-/// Field parsed to f64 (string or number), or None when missing/unparseable.
-fn vnum_opt(v: &Value, key: &str) -> Option<f64> {
-    match v.get(key) {
-        Some(Value::Number(n)) => n.as_f64(),
-        Some(Value::String(s)) => s.trim().parse().ok(),
-        _ => None,
-    }
-}
-
-/// Like `vnum_opt` but 0.0 for missing/unparseable fields.
-fn vnum(v: &Value, key: &str) -> f64 {
-    vnum_opt(v, key).unwrap_or(0.0)
+/// Parse a numeric string field ("295.0"), or 0.0 when empty/unparseable.
+fn num(s: &str) -> f64 {
+    s.trim().parse().unwrap_or(0.0)
 }
 
 pub fn parse(json: &str) -> Result<Forecast> {
-    let root: Value = serde_json::from_str(json).map_err(|_| anyhow!("bad forecast JSON"))?;
-    let d = root.get("data").ok_or_else(|| anyhow!("no data"))?;
+    let resp: ForecastResponse =
+        serde_json::from_str(json).map_err(|_| anyhow!("bad forecast JSON"))?;
+    let d = resp.data;
 
-    if d.get("Valid").and_then(Value::as_bool) != Some(true) {
+    if !d.valid {
         return Err(anyhow!("forecast not valid"));
     }
-    let arr = d
-        .get("Data")
-        .and_then(Value::as_array)
-        .filter(|a| !a.is_empty())
-        .ok_or_else(|| anyhow!("no forecast steps"))?;
-    let c = &arr[0];
+    if d.steps.is_empty() {
+        return Err(anyhow!("no forecast steps"));
+    }
+    let c = &d.steps[0];
 
     // Build the de-duplicated step series (see module doc-comment above).
-    let ten: Vec<&Value> = arr
+    let ten: Vec<&ForecastStep> = d
+        .steps
         .iter()
-        .filter(|s| s.get("Type").and_then(Value::as_str) == Some("Type_Ten_Minutes"))
+        .filter(|s| s.kind == "Type_Ten_Minutes")
         .collect();
-    let last_ten: Option<&str> = ten
-        .iter()
-        .filter_map(|s| s.get("Date").and_then(Value::as_str))
-        .max();
-    let cutoff = last_ten.unwrap_or("");
-    let mut steps: Vec<&Value> = ten.clone();
-    for s in arr {
-        if s.get("Type").and_then(Value::as_str) == Some("Type_Hour") {
-            if let Some(date) = s.get("Date").and_then(Value::as_str) {
-                if date > cutoff {
-                    steps.push(s);
-                }
-            }
+    let cutoff = ten.iter().map(|s| s.date.as_str()).max().unwrap_or("");
+    let mut steps: Vec<&ForecastStep> = ten.clone();
+    for s in &d.steps {
+        if s.kind == "Type_Hour" && s.date.as_str() > cutoff {
+            steps.push(s);
         }
     }
     if steps.is_empty() {
-        steps = arr.iter().collect();
+        steps = d.steps.iter().collect();
     }
 
-    let temp = vnum_opt(c, "Temperature").ok_or_else(|| anyhow!("no temperature"))? - 273.15;
-    let feels = vnum_opt(c, "Chill").unwrap_or(temp + 273.15) - 273.15;
-    let pres = vnum_opt(c, "PressureMSL").unwrap_or(0.0) / 100.0;
+    let temp = c
+        .temperature
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| anyhow!("no temperature"))?
+        - 273.15;
+    let feels = c.chill.trim().parse::<f64>().unwrap_or(temp + 273.15) - 273.15;
+    let pres = num(&c.pressure_msl) / 100.0;
 
-    let prec_sum: f64 = steps.iter().map(|s| vnum(s, "Precipitation10m")).sum();
-    let rain_sum: f64 = steps.iter().map(|s| vnum(s, "Rain10m")).sum();
-    let snow_sum: f64 = steps.iter().map(|s| vnum(s, "Snow10m")).sum();
+    let prec_sum: f64 = steps.iter().map(|s| num(&s.precipitation)).sum();
+    let rain_sum: f64 = steps.iter().map(|s| num(&s.rain)).sum();
+    let snow_sum: f64 = steps.iter().map(|s| num(&s.snow)).sum();
 
-    let hrs = match (
-        steps.first().and_then(|s| s.get("Date")).and_then(Value::as_str),
-        steps.last().and_then(|s| s.get("Date")).and_then(Value::as_str),
-    ) {
+    let hrs = match (steps.first(), steps.last()) {
         (Some(a), Some(b)) => match (
-            chrono::DateTime::parse_from_rfc3339(a),
-            chrono::DateTime::parse_from_rfc3339(b),
+            chrono::DateTime::parse_from_rfc3339(&a.date),
+            chrono::DateTime::parse_from_rfc3339(&b.date),
         ) {
             (Ok(ta), Ok(tb)) => (tb.timestamp() - ta.timestamp()) as f64 / 3600.0,
             _ => 0.0,
@@ -112,22 +88,21 @@ pub fn parse(json: &str) -> Result<Forecast> {
         _ => 0.0,
     };
 
-    let sun = d.get("Sun");
     Ok(Forecast {
         temp,
         feels,
-        wspeed: vstr(c, "Wind_Speed"),
-        wdir: vstr(c, "Wind_Dir"),
-        gust: vstr(c, "Wind_Gust"),
-        hum: vstr(c, "Humidity"),
+        wspeed: c.wind_speed.clone(),
+        wdir: c.wind_dir.clone(),
+        gust: c.wind_gust.clone(),
+        hum: c.humidity.clone(),
         pres,
-        cloud: vstr(c, "Cloud"),
-        icon: vstr(c, "Icon10"),
-        rain: vnum(c, "Rain10m"),
-        snow: vnum(c, "Snow10m"),
-        prec: vnum(c, "Precipitation10m"),
-        sunrise: sun.map(|s| vstr(s, "Sunrise")).unwrap_or_default(),
-        sunset: sun.map(|s| vstr(s, "Sunset")).unwrap_or_default(),
+        cloud: c.cloud.clone(),
+        icon: c.icon.clone(),
+        rain: num(&c.rain),
+        snow: num(&c.snow),
+        prec: num(&c.precipitation),
+        sunrise: d.sun.sunrise.clone(),
+        sunset: d.sun.sunset.clone(),
         prec_sum,
         rain_sum,
         snow_sum,

@@ -1,17 +1,23 @@
-//! Warning logic. Two independent boxes:
+//! Warning logic. Two independent box kinds:
 //!
-//!  * meteo — the nationwide `warningsmeteo` feed filtered to this point's powiat
-//!    TERYT (each warning is tagged with the powiat codes it covers).
-//!  * hydrological drought — locate this point's river basin by point-in-polygon over
-//!    zlew.json, then match its KOD against the active `warningshydro` drought areas,
-//!    so a drought elsewhere in the country does not raise a box here.
+//!  * meteo — the nationwide meteo feed filtered to this point's administrative area
+//!    (each warning is tagged with the area codes it covers).
+//!  * hydrological — locate this point's river basin by point-in-polygon over the
+//!    basin polygons, then match its code against the active hydro warnings, so a
+//!    warning elsewhere in the country does not raise a box here.
 //!
 //! The point-in-polygon test and both filters are pure and unit-tested; the network
 //! fetches live in imgw.rs.
 
+use crate::model::{BasinCollection, HydroWarning, MeteoWarning};
 use chrono::NaiveDate;
 use serde_json::Value;
 use std::path::Path;
+
+/// Wire values for the hydrological-drought special case: IMGW encodes it as a
+/// level `-1` warning whose event name contains "susza" (Polish for "drought").
+const DROUGHT_LEVEL: &str = "-1";
+const DROUGHT_EVENT_MARKER: &str = "susza";
 
 /// Ray-casting point-in-polygon on a ring of `[lon, lat]` pairs.
 pub fn point_in_ring(ring: &[Vec<f64>], lon: f64, lat: f64) -> bool {
@@ -55,8 +61,8 @@ fn parse_level(s: &str) -> Option<i64> {
     s.trim().parse().ok()
 }
 
-/// Merge a warning's main description (przebieg/tresc) with its remarks (komentarz),
-/// dropping remarks that are absent or "Brak" (Polish for "none"). Whitespace-trimmed.
+/// Merge a warning's main description with its remarks, dropping remarks that are
+/// absent or "Brak" (the feed's value for "none"). Whitespace-trimmed.
 fn merge_desc(main: &str, comment: &str) -> String {
     let main = main.trim();
     let comment = comment.trim();
@@ -99,97 +105,70 @@ fn humanize_ts(ts: &str, today: NaiveDate) -> String {
     }
 }
 
-/// Meteo warnings for this point's powiat `teryt`, one per warning that covers it,
-/// each tagged with its severity level (1/2/3) for colour grouping. `today` (in the
+/// Meteo warnings for this point's administrative `area`, one per warning that covers
+/// it, each tagged with its severity level (1/2/3) for colour grouping. `today` (in the
 /// timestamps' timezone) drives the relative "today/yesterday/tomorrow" formatting.
-pub fn meteo_warnings(warn_json: &Value, teryt: &str, today: NaiveDate) -> Vec<Warning> {
-    let arr = match warn_json.as_array() {
-        Some(a) => a,
-        None => return Vec::new(),
-    };
-    arr.iter()
-        .filter(|w| {
-            w.get("teryt")
-                .and_then(Value::as_array)
-                .map(|codes| codes.iter().any(|c| c.as_str() == Some(teryt)))
-                .unwrap_or(false)
-        })
+pub fn meteo_warnings(warnings: &[MeteoWarning], area: &str, today: NaiveDate) -> Vec<Warning> {
+    warnings
+        .iter()
+        .filter(|w| w.areas.iter().any(|c| c == area))
         .filter_map(|w| {
-            let stopien = w.get("stopien").and_then(Value::as_str)?;
-            let level = parse_level(stopien)?;
-            let name = w.get("nazwa_zdarzenia").and_then(Value::as_str).unwrap_or("");
-            let prob = w.get("prawdopodobienstwo").and_then(Value::as_str).unwrap_or("");
-            let from = drop_seconds(w.get("obowiazuje_od").and_then(Value::as_str).unwrap_or(""));
-            let until = drop_seconds(w.get("obowiazuje_do").and_then(Value::as_str).unwrap_or(""));
-            let desc = merge_desc(
-                w.get("tresc").and_then(Value::as_str).unwrap_or(""),
-                w.get("komentarz").and_then(Value::as_str).unwrap_or(""),
-            );
+            let level = parse_level(&w.level)?;
+            let from = drop_seconds(&w.valid_from);
+            let until = drop_seconds(&w.valid_until);
+            let desc = merge_desc(&w.description, &w.remarks);
             let (from_disp, until_disp) = (humanize_ts(from, today), humanize_ts(until, today));
             Some(Warning {
                 level,
-                prob: prob.to_string(),
+                prob: w.probability.clone(),
                 from: from.to_string(),
                 until: until.to_string(),
-                headline: format!("{name} — from {from_disp} until {until_disp}"),
+                headline: format!("{} — from {from_disp} until {until_disp}", w.event),
                 desc,
             })
         })
         .collect()
 }
 
-/// Regular hydrological warnings (levels 1/2/3) for this point's river basin `kod`.
-/// The hardcoded drought level (-1, susza hydrologiczna) is excluded — see
-/// [`drought_hits_basin`] for that separate notice.
-pub fn hydro_warnings(hydro_json: &Value, kod: &str, today: NaiveDate) -> Vec<Warning> {
-    let arr = match hydro_json.as_array() {
-        Some(a) => a,
-        None => return Vec::new(),
-    };
-    arr.iter()
+/// Regular hydrological warnings (levels 1/2/3) for this point's river basin.
+/// The hardcoded drought level (-1) is excluded — see [`drought_hits_basin`] for
+/// that separate notice.
+pub fn hydro_warnings(
+    warnings: &[HydroWarning],
+    basin_code: &str,
+    today: NaiveDate,
+) -> Vec<Warning> {
+    warnings
+        .iter()
         .filter_map(|w| {
-            let stopien = w.get("stopień").and_then(Value::as_str)?;
-            let level = parse_level(stopien)?;
+            let level = parse_level(&w.level)?;
             if level < 1 {
                 return None; // drought (-1) is handled as a separate notice
             }
-            if !hydro_covers_basin(w, kod) {
+            if !hydro_covers_basin(w, basin_code) {
                 return None;
             }
-            let name = w.get("zdarzenie").and_then(Value::as_str).unwrap_or("");
-            let prob = w.get("prawdopodobienstwo").and_then(Value::as_str).unwrap_or("");
-            let from = drop_seconds(w.get("data_od").and_then(Value::as_str).unwrap_or(""));
-            let until = drop_seconds(w.get("data_do").and_then(Value::as_str).unwrap_or(""));
-            let desc = merge_desc(
-                w.get("przebieg").and_then(Value::as_str).unwrap_or(""),
-                w.get("komentarz").and_then(Value::as_str).unwrap_or(""),
-            );
+            let from = drop_seconds(&w.valid_from);
+            let until = drop_seconds(&w.valid_until);
+            let desc = merge_desc(&w.description, &w.remarks);
             let (from_disp, until_disp) = (humanize_ts(from, today), humanize_ts(until, today));
             Some(Warning {
                 level,
-                prob: prob.to_string(),
+                prob: w.probability.clone(),
                 from: from.to_string(),
                 until: until.to_string(),
-                headline: format!("{name} — from {from_disp} until {until_disp}"),
+                headline: format!("{} — from {from_disp} until {until_disp}", w.event),
                 desc,
             })
         })
         .collect()
 }
 
-/// Whether a hydro warning's affected areas include the basin `kod`.
-fn hydro_covers_basin(w: &Value, kod: &str) -> bool {
-    w.get("obszary")
-        .and_then(Value::as_array)
-        .map(|areas| {
-            areas.iter().any(|a| {
-                a.get("kod_zlewni")
-                    .and_then(Value::as_array)
-                    .map(|codes| codes.iter().any(|c| c.as_str() == Some(kod)))
-                    .unwrap_or(false)
-            })
-        })
-        .unwrap_or(false)
+/// Whether a hydro warning's affected areas include the basin `basin_code`.
+fn hydro_covers_basin(w: &HydroWarning, basin_code: &str) -> bool {
+    w.areas
+        .iter()
+        .any(|a| a.basin_codes.iter().any(|c| c == basin_code))
 }
 
 /// Order warnings for display: highest severity first, and within a severity
@@ -205,26 +184,28 @@ pub fn ordered_for_display(mut warnings: Vec<Warning>) -> Vec<Warning> {
     warnings
 }
 
-/// A river basin, identified by its KOD and human NAZWA.
+/// A river basin, identified by its code and human name.
 pub struct Basin {
-    pub kod: String,
-    pub nazwa: String,
+    pub code: String,
+    pub name: String,
 }
 
-/// Locate the river basin containing (lat, lon) by point-in-polygon over zlew.json.
-/// Returns the first matching feature's (KOD, NAZWA).
-pub fn find_basin(zlew_path: &Path, lat: f64, lon: f64) -> Option<Basin> {
-    let text = std::fs::read_to_string(zlew_path).ok()?;
-    let v: Value = serde_json::from_str(&text).ok()?;
-    let features = v.get("features").and_then(Value::as_array)?;
-    for f in features {
-        let geom = f.get("geometry")?;
-        let gtype = geom.get("type").and_then(Value::as_str).unwrap_or("");
-        let coords = geom.get("coordinates")?;
-        // Normalise to a list of polygons, each a list of rings (exterior first).
-        let polys: Vec<&Value> = match gtype {
-            "Polygon" => vec![coords],
-            "MultiPolygon" => coords.as_array().map(|a| a.iter().collect()).unwrap_or_default(),
+/// Locate the river basin containing (lat, lon) by point-in-polygon over the basin
+/// polygons. Returns the first matching feature's (code, name).
+pub fn find_basin(basins_path: &Path, lat: f64, lon: f64) -> Option<Basin> {
+    let text = std::fs::read_to_string(basins_path).ok()?;
+    let collection: BasinCollection = serde_json::from_str(&text).ok()?;
+    for f in &collection.features {
+        // Normalise to a list of polygons, each a list of rings (exterior first). The
+        // coordinate arrays stay untyped: GeoJSON nests them by geometry type.
+        let polys: Vec<&Value> = match f.geometry.kind.as_str() {
+            "Polygon" => vec![&f.geometry.coordinates],
+            "MultiPolygon" => f
+                .geometry
+                .coordinates
+                .as_array()
+                .map(|a| a.iter().collect())
+                .unwrap_or_default(),
             _ => continue,
         };
         let hit = polys.iter().any(|poly| {
@@ -234,14 +215,10 @@ pub fn find_basin(zlew_path: &Path, lat: f64, lon: f64) -> Option<Basin> {
                 .unwrap_or(false)
         });
         if hit {
-            let props = f.get("properties");
-            let kod = props.and_then(|p| p.get("KOD")).and_then(Value::as_str)?.to_string();
-            let nazwa = props
-                .and_then(|p| p.get("NAZWA"))
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            return Some(Basin { kod, nazwa });
+            return Some(Basin {
+                code: f.properties.code.clone(),
+                name: f.properties.name.clone(),
+            });
         }
     }
     None
@@ -259,20 +236,13 @@ fn ring_to_vec(ring: &Value) -> Option<Vec<Vec<f64>>> {
     )
 }
 
-/// True if a hydrological drought (`stopień == "-1"` or a "susza" event) is active for
-/// the basin `kod`, from a `warningshydro` body.
-pub fn drought_hits_basin(hydro_json: &Value, kod: &str) -> bool {
-    let arr = match hydro_json.as_array() {
-        Some(a) => a,
-        None => return false,
-    };
-    arr.iter().any(|w| {
-        let is_drought = w.get("stopień").and_then(Value::as_str) == Some("-1")
-            || w.get("zdarzenie")
-                .and_then(Value::as_str)
-                .map(|s| s.to_lowercase().contains("susza"))
-                .unwrap_or(false);
-        is_drought && hydro_covers_basin(w, kod)
+/// True if a hydrological drought (level `-1`, or a drought-marker event) is active for
+/// the basin `basin_code`, from the hydro-warning items.
+pub fn drought_hits_basin(warnings: &[HydroWarning], basin_code: &str) -> bool {
+    warnings.iter().any(|w| {
+        let is_drought =
+            w.level == DROUGHT_LEVEL || w.event.to_lowercase().contains(DROUGHT_EVENT_MARKER);
+        is_drought && hydro_covers_basin(w, basin_code)
     })
 }
 
@@ -306,8 +276,8 @@ mod tests {
     }
 
     #[test]
-    fn meteo_warnings_filter_by_teryt_with_probability_and_description() {
-        let warn: Value = serde_json::from_str(
+    fn meteo_warnings_filter_by_area_with_probability_and_description() {
+        let warn: Vec<MeteoWarning> = serde_json::from_str(
             r#"[
               {"nazwa_zdarzenia":"Upał","stopien":"3","prawdopodobienstwo":"85","obowiazuje_od":"2026-08-04 12:00:00","obowiazuje_do":"2026-08-01 20:00:00","tresc":"Prognozuje się upały.","komentarz":"Brak.","teryt":["1206","1201"]},
               {"nazwa_zdarzenia":"Burze","stopien":"1","prawdopodobienstwo":"70","obowiazuje_od":"2026-07-31 15:00:00","obowiazuje_do":"2026-07-31 21:00:00","tresc":"Burze z gradem.","teryt":["1465"]}
@@ -321,10 +291,10 @@ mod tests {
             vec![Warning {
                 level: 3,
                 prob: "85".into(),
-                from: "2026-08-04 12:00".into(), // tomorrow
+                from: "2026-08-04 12:00".into(),  // tomorrow
                 until: "2026-08-01 20:00".into(), // two days back -> absolute
                 headline: "Upał — from tomorrow 12:00 until 2026-08-01 20:00".into(),
-                desc: "Prognozuje się upały.".into(), // komentarz "Brak." dropped
+                desc: "Prognozuje się upały.".into(), // remarks "Brak." dropped
             }]
         );
         assert!(meteo_warnings(&warn, "9999", today).is_empty());
@@ -335,8 +305,14 @@ mod tests {
         assert_eq!(merge_desc("Upały.", "Brak."), "Upały.");
         assert_eq!(merge_desc("Upały.", "brak"), "Upały.");
         assert_eq!(merge_desc("Upały.", "  "), "Upały.");
-        assert_eq!(merge_desc("Upały.", "Możliwe podtopienia."), "Upały. Możliwe podtopienia.");
-        assert_eq!(merge_desc("", "Możliwe podtopienia."), "Możliwe podtopienia.");
+        assert_eq!(
+            merge_desc("Upały.", "Możliwe podtopienia."),
+            "Upały. Możliwe podtopienia."
+        );
+        assert_eq!(
+            merge_desc("", "Możliwe podtopienia."),
+            "Możliwe podtopienia."
+        );
         assert_eq!(merge_desc("  Upały.  ", ""), "Upały.");
         // "brak" as a substring of a real remark is kept
         assert_eq!(merge_desc("X.", "Brak opadów."), "X. Brak opadów.");
@@ -378,8 +354,18 @@ mod tests {
             w(1, "2026-08-01 00:00", "2026-08-02 00:00", "l1"),
             w(2, "2026-08-05 00:00", "2026-08-06 00:00", "l2-late"),
             w(3, "2026-08-01 00:00", "2026-08-02 00:00", "l3"),
-            w(2, "2026-08-03 00:00", "2026-08-09 00:00", "l2-early-lateend"),
-            w(2, "2026-08-03 00:00", "2026-08-04 00:00", "l2-early-earlyend"),
+            w(
+                2,
+                "2026-08-03 00:00",
+                "2026-08-09 00:00",
+                "l2-early-lateend",
+            ),
+            w(
+                2,
+                "2026-08-03 00:00",
+                "2026-08-04 00:00",
+                "l2-early-earlyend",
+            ),
         ];
         let ordered: Vec<String> = ordered_for_display(ws)
             .into_iter()
@@ -387,13 +373,19 @@ mod tests {
             .collect();
         assert_eq!(
             ordered,
-            vec!["l3", "l2-early-earlyend", "l2-early-lateend", "l2-late", "l1"]
+            vec![
+                "l3",
+                "l2-early-earlyend",
+                "l2-early-lateend",
+                "l2-late",
+                "l1"
+            ]
         );
     }
 
     #[test]
     fn hydro_warnings_filter_by_basin_and_exclude_drought() {
-        let hydro: Value = serde_json::from_str(
+        let hydro: Vec<HydroWarning> = serde_json::from_str(
             r#"[
               {"stopień":"-1","zdarzenie":"Susza hydrologiczna","data_do":"2026-09-01 00:00:00",
                "obszary":[{"kod_zlewni":["R_K_MP_1"]}]},
@@ -407,7 +399,7 @@ mod tests {
         let today = NaiveDate::from_ymd_opt(2026, 8, 3).unwrap();
         let ws = hydro_warnings(&hydro, "R_K_MP_1", today);
         // only the level-2 warning covers R_K_MP_1; drought (-1) is excluded here.
-        // both timestamps are today -> shown as time only; przebieg + komentarz merged
+        // both timestamps are today -> shown as time only; description + remarks merged
         assert_eq!(
             ws,
             vec![Warning {
@@ -422,8 +414,8 @@ mod tests {
     }
 
     #[test]
-    fn drought_matches_basin_by_stopien_or_event() {
-        let hydro: Value = serde_json::from_str(
+    fn drought_matches_basin_by_level_or_event() {
+        let hydro: Vec<HydroWarning> = serde_json::from_str(
             r#"[
               {"stopień":"-1","zdarzenie":"Susza hydrologiczna",
                "obszary":[{"kod_zlewni":["O_Z_K_52","X_1"]}]},

@@ -3,8 +3,11 @@
 //! geocoding for names, Open-Meteo + BigDataCloud for bare coordinates.
 
 use crate::client::Client;
+use crate::model::{
+    GeocodeQuery, GeocodeResults, OpenMeteoForecast, ReverseGeocode, ReverseGeocodeQuery,
+    TimezoneQuery,
+};
 use anyhow::{anyhow, Result};
-use serde_json::Value;
 
 pub struct Location {
     pub lat: f64,
@@ -39,87 +42,74 @@ pub fn resolve(client: &Client, place: &str) -> Result<Location> {
 }
 
 fn resolve_coords(client: &Client, lat: f64, lon: f64) -> Result<Location> {
-    let (lat_s, lon_s) = (lat.to_string(), lon.to_string());
-
     // timezone from Open-Meteo (auto), default UTC.
+    let tz_query = TimezoneQuery {
+        latitude: lat,
+        longitude: lon,
+        timezone: "auto",
+        forecast_days: 1,
+    };
     let tz = client
-        .get_text(
-            &client.endpoints.open_meteo,
-            &[
-                ("latitude", lat_s.as_str()),
-                ("longitude", lon_s.as_str()),
-                ("timezone", "auto"),
-                ("forecast_days", "1"),
-            ],
-            3,
-        )
+        .get_query(&client.endpoints.open_meteo, &tz_query, 3)
         .ok()
-        .and_then(|b| serde_json::from_str::<Value>(&b).ok())
-        .and_then(|v| v.get("timezone").and_then(Value::as_str).map(String::from))
+        .and_then(|b| serde_json::from_str::<OpenMeteoForecast>(&b).ok())
+        .map(|r| r.timezone)
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "UTC".to_string());
 
     // display name from BigDataCloud reverse geocode, default "lat, lon".
+    let name_query = ReverseGeocodeQuery {
+        latitude: lat,
+        longitude: lon,
+        locality_language: "en",
+    };
     let label = client
-        .get_text(
-            &client.endpoints.bigdatacloud,
-            &[
-                ("latitude", lat_s.as_str()),
-                ("longitude", lon_s.as_str()),
-                ("localityLanguage", "en"),
-            ],
-            3,
-        )
+        .get_query(&client.endpoints.bigdatacloud, &name_query, 3)
         .ok()
-        .and_then(|b| serde_json::from_str::<Value>(&b).ok())
-        .and_then(|v| {
-            for k in ["city", "locality", "principalSubdivision"] {
-                if let Some(s) = v.get(k).and_then(Value::as_str) {
-                    if !s.is_empty() {
-                        return Some(s.to_string());
-                    }
-                }
-            }
-            None
+        .and_then(|b| serde_json::from_str::<ReverseGeocode>(&b).ok())
+        .and_then(|r| {
+            [r.city, r.locality, r.principal_subdivision]
+                .into_iter()
+                .find(|s| !s.is_empty())
         })
         .unwrap_or_else(|| format!("{lat}, {lon}"));
 
-    Ok(Location { lat, lon, tz, label })
+    Ok(Location {
+        lat,
+        lon,
+        tz,
+        label,
+    })
 }
 
 fn resolve_name(client: &Client, town: &str) -> Result<Location> {
+    let query = GeocodeQuery {
+        name: town,
+        count: 1,
+        language: "en",
+        format: "json",
+    };
     let body = client
-        .get_text(
-            &client.endpoints.geocoding,
-            &[
-                ("name", town),
-                ("count", "1"),
-                ("language", "en"),
-                ("format", "json"),
-            ],
-            3,
-        )
+        .get_query(&client.endpoints.geocoding, &query, 3)
         .map_err(|_| anyhow!("geocoding request failed"))?;
 
-    let v: Value = serde_json::from_str(&body).map_err(|_| anyhow!("geocoding request failed"))?;
-    let first = v
-        .get("results")
-        .and_then(Value::as_array)
-        .and_then(|a| a.first())
+    let parsed: GeocodeResults =
+        serde_json::from_str(&body).map_err(|_| anyhow!("geocoding request failed"))?;
+    let first = parsed
+        .results
+        .into_iter()
+        .next()
         .ok_or_else(|| anyhow!("could not geocode \"{town}\""))?;
 
-    let lat = first.get("latitude").and_then(Value::as_f64);
-    let lon = first.get("longitude").and_then(Value::as_f64);
-    let (lat, lon) = match (lat, lon) {
+    let (lat, lon) = match (first.latitude, first.longitude) {
         (Some(a), Some(b)) => (a, b),
         _ => return Err(anyhow!("could not geocode \"{town}\"")),
     };
-    let tz = first
-        .get("timezone")
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-        .unwrap_or("UTC")
-        .to_string();
+    let tz = if first.timezone.is_empty() {
+        "UTC".to_string()
+    } else {
+        first.timezone
+    };
 
     Ok(Location {
         lat,
@@ -146,7 +136,10 @@ mod tests {
 
     #[test]
     fn coords_tolerate_whitespace() {
-        assert!(matches!(parse_place("  52.24 , 21.03 "), Place::Coords(_, _)));
+        assert!(matches!(
+            parse_place("  52.24 , 21.03 "),
+            Place::Coords(_, _)
+        ));
     }
 
     #[test]

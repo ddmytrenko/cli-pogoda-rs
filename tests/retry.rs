@@ -23,9 +23,7 @@ fn returns_body_on_success_with_a_single_request() {
         .create();
 
     let client = test_client();
-    let body = client
-        .get_text(&format!("{}/ok", server.url()), &[], 3)
-        .unwrap();
+    let body = client.get(&format!("{}/ok", server.url()), 3).unwrap();
 
     assert_eq!(body, "hello");
     m.assert(); // exactly one request
@@ -42,7 +40,7 @@ fn retries_then_gives_up_after_max_attempts_on_persistent_5xx() {
         .create();
 
     let client = test_client();
-    let r = client.get_text(&format!("{}/down", server.url()), &[], 3);
+    let r = client.get(&format!("{}/down", server.url()), 3);
 
     assert!(r.is_err());
     m.assert();
@@ -68,9 +66,7 @@ fn recovers_when_a_later_attempt_succeeds() {
         .create();
 
     let client = test_client();
-    let body = client
-        .get_text(&format!("{}/flaky", server.url()), &[], 5)
-        .unwrap();
+    let body = client.get(&format!("{}/flaky", server.url()), 5).unwrap();
 
     assert_eq!(body, "recovered");
     fail.assert();
@@ -88,7 +84,7 @@ fn retries_on_404_since_imgw_nodes_transiently_404() {
         .create();
 
     let client = test_client();
-    let r = client.get_text(&format!("{}/node", server.url()), &[], 4);
+    let r = client.get(&format!("{}/node", server.url()), 4);
 
     assert!(r.is_err());
     m.assert();

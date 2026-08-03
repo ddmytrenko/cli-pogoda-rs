@@ -1,11 +1,12 @@
 //! Networked IMGW endpoints: the app API token (scraped + cached), the HYBRID point
-//! forecast, the reverse geocoder (for a point's powiat TERYT), the danepubliczne
-//! warnings products, and the cached river-basin polygons (zlew.json). All fetches go
-//! through the client's retry/backoff policy.
+//! forecast, the reverse geocoder (point → administrative-area code), the warning
+//! feeds, and the cached river-basin polygons. All fetches go through the client's
+//! retry/backoff policy.
 
 use crate::client::Client;
+use crate::model::{AreaQuery, AreaResponse, ForecastQuery};
 use anyhow::{anyhow, Result};
-use serde_json::Value;
+use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -38,12 +39,12 @@ pub fn token(client: &Client, cache_dir: &Path, refresh: bool) -> Result<String>
     }
 
     let meteo = &client.endpoints.meteo;
-    let index = client.get_text(&format!("{meteo}/"), &[], 3)?;
+    let index = client.get(&format!("{meteo}/"), 3)?;
     let main = find_between(&index, "main.", ".js")
         .map(|mid| format!("main.{mid}.js"))
         .ok_or_else(|| anyhow!("could not locate the JS bundle"))?;
 
-    let bundle = client.get_text(&format!("{meteo}/{main}"), &[], 3)?;
+    let bundle = client.get(&format!("{meteo}/{main}"), 3)?;
     let tok = find_between(&bundle, "apiToken:\"", "\"")
         .ok_or_else(|| anyhow!("could not extract apiToken"))?;
 
@@ -67,63 +68,53 @@ fn find_between(hay: &str, open: &str, close: &str) -> Option<String> {
 
 /// Fetch the HYBRID point forecast body for a coordinate, with the given token.
 pub fn forecast(client: &Client, token: &str, lat: f64, lon: f64) -> Result<String> {
-    let (lat, lon) = (lat.to_string(), lon.to_string());
     let url = format!("{}/api/v1/forecast/fcapi", client.endpoints.meteo);
-    client.get_text(
-        &url,
-        &[
-            ("token", token),
-            ("lat", lat.as_str()),
-            ("lon", lon.as_str()),
-            ("m", "hybrid"),
-        ],
-        3,
-    )
+    let query = ForecastQuery {
+        token,
+        lat,
+        lon,
+        mode: "hybrid",
+    };
+    client.get_query(&url, &query, 3)
 }
 
-/// The powiat TERYT code nearest a coordinate, via IMGW's reverse geocoder. None on
-/// any failure (the meteo-warning box is simply skipped without a TERYT to filter by).
-pub fn reverse_teryt(client: &Client, token: &str, lat: f64, lon: f64) -> Option<String> {
-    let (lat, lon) = (lat.to_string(), lon.to_string());
+/// The administrative-area code nearest a coordinate, via IMGW's reverse geocoder. None
+/// on any failure (the meteo-warning box is simply skipped without an area to filter by).
+pub fn area_code(client: &Client, token: &str, lat: f64, lon: f64) -> Option<String> {
     let url = format!("{}/api/v1/geo/search-reverse", client.endpoints.meteo);
-    let body = client
-        .get_text(
-            &url,
-            &[
-                ("token", token),
-                ("lat", lat.as_str()),
-                ("lon", lon.as_str()),
-                ("range", "10"),
-            ],
-            3,
-        )
-        .ok()?;
-    let v: Value = serde_json::from_str(&body).ok()?;
-    nearest_teryt(&v)
+    let query = AreaQuery {
+        token,
+        lat,
+        lon,
+        range: 10,
+    };
+    let body = client.get_query(&url, &query, 3).ok()?;
+    let parsed: AreaResponse = serde_json::from_str(&body).ok()?;
+    nearest_area(&parsed)
 }
 
-/// Pick the TERYT of the nearest match (smallest `dist`) from a reverse-geocode body.
-fn nearest_teryt(v: &Value) -> Option<String> {
-    let data = v.get("data").and_then(Value::as_array)?;
-    data.iter()
+/// Pick the area code of the nearest match (smallest distance) from a lookup response.
+fn nearest_area(resp: &AreaResponse) -> Option<String> {
+    resp.data
+        .iter()
         .filter_map(|e| {
-            let dist: f64 = e.get("dist").and_then(Value::as_str)?.parse().ok()?;
-            let teryt = e.get("teryt").and_then(Value::as_str)?.to_string();
-            Some((dist, teryt))
+            let distance: f64 = e.distance.parse().ok()?;
+            Some((distance, e.area.clone()))
         })
-        .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
-        .map(|(_, teryt)| teryt)
+        .filter(|(_, area)| !area.is_empty())
+        .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal))
+        .map(|(_, area)| area)
 }
 
-/// Fetch a danepubliczne warnings product (retries past 404-ing nodes). Returns the
-/// body (may be `[]` when there are no warnings), or None on total failure.
-pub fn danepubliczne(client: &Client, product: &str) -> Option<String> {
-    let url = format!("{}/{product}", client.endpoints.danepubliczne);
-    client.get_text(&url, &[], 5).ok()
+/// Fetch a warning feed (retries past 404-ing nodes). Returns the body (may be `[]`
+/// when there are no warnings), or None on total failure.
+pub fn warning_feed(client: &Client, product: &str) -> Option<String> {
+    let url = format!("{}/{product}", client.endpoints.warnings);
+    client.get(&url, 5).ok()
 }
 
-/// Ensure zlew.json (river-basin polygons) is cached and < 30 days old; return its path.
-pub fn ensure_zlew(client: &Client, cache_dir: &Path) -> Option<PathBuf> {
+/// Ensure the river-basin polygons are cached and < 30 days old; return the file path.
+pub fn ensure_basins(client: &Client, cache_dir: &Path) -> Option<PathBuf> {
     let path = cache_dir.join("imgw-zlew.json");
     let present = |p: &Path| std::fs::metadata(p).map(|m| m.len() > 0).unwrap_or(false);
     if fresh(&path, ZLEW_TTL) && present(&path) {
@@ -148,14 +139,20 @@ mod tests {
     #[test]
     fn extracts_bundle_name_and_token() {
         let html = r#"<script src="main.7fef0da67464963c.js"></script>"#;
-        assert_eq!(find_between(html, "main.", ".js").unwrap(), "7fef0da67464963c");
+        assert_eq!(
+            find_between(html, "main.", ".js").unwrap(),
+            "7fef0da67464963c"
+        );
         let js = r#"...,apiToken:"p4DXKjsYadfBV21TYrDk",foo..."#;
-        assert_eq!(find_between(js, "apiToken:\"", "\"").unwrap(), "p4DXKjsYadfBV21TYrDk");
+        assert_eq!(
+            find_between(js, "apiToken:\"", "\"").unwrap(),
+            "p4DXKjsYadfBV21TYrDk"
+        );
     }
 
     #[test]
-    fn nearest_teryt_picks_smallest_dist() {
-        let v: Value = serde_json::from_str(
+    fn nearest_area_picks_smallest_distance() {
+        let resp: AreaResponse = serde_json::from_str(
             r#"{"data":[
                 {"teryt":"1206","dist":"0.90"},
                 {"teryt":"1465","dist":"0.53"},
@@ -163,12 +160,12 @@ mod tests {
             ]}"#,
         )
         .unwrap();
-        assert_eq!(nearest_teryt(&v).unwrap(), "1465");
+        assert_eq!(nearest_area(&resp).unwrap(), "1465");
     }
 
     #[test]
-    fn nearest_teryt_none_on_empty() {
-        let v: Value = serde_json::from_str(r#"{"data":[]}"#).unwrap();
-        assert!(nearest_teryt(&v).is_none());
+    fn nearest_area_none_on_empty() {
+        let resp: AreaResponse = serde_json::from_str(r#"{"data":[]}"#).unwrap();
+        assert!(nearest_area(&resp).is_none());
     }
 }

@@ -9,8 +9,8 @@ pub fn cardinal(deg: &str) -> String {
         Err(_) => return String::new(),
     };
     const C: [&str; 16] = [
-        "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW",
-        "NNW",
+        "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW",
+        "NW", "NNW",
     ];
     // `as i64` truncates toward zero; the modulo below folds negatives into range.
     let idx = (d / 22.5 + 0.5) as i64;
@@ -28,7 +28,12 @@ pub fn condition(icon: &str, rain: f64, snow: f64, prec: f64) -> String {
 
     let mut sky: String = match cloud {
         Some('0') => (if night { "clear" } else { "sunny" }).into(),
-        Some('1') | Some('2') => (if night { "mostly clear" } else { "mostly sunny" }).into(),
+        Some('1') | Some('2') => (if night {
+            "mostly clear"
+        } else {
+            "mostly sunny"
+        })
+        .into(),
         Some('3') | Some('4') => "partly cloudy".into(),
         Some('5') | Some('6') => "mostly cloudy".into(),
         Some('7') => "cloudy".into(),
@@ -118,7 +123,10 @@ mod tests {
     fn condition_with_precip() {
         assert_eq!(condition("n7z60d", 0.5, 0.0, 0.5), "cloudy, moderate rain");
         assert_eq!(condition("n8z00d", 0.0, 2.0, 2.0), "overcast, heavy snow");
-        assert_eq!(condition("n1z00d", 0.1, 0.0, 0.1), "mostly sunny, light rain");
+        assert_eq!(
+            condition("n1z00d", 0.1, 0.0, 0.1),
+            "mostly sunny, light rain"
+        );
     }
 
     #[test]

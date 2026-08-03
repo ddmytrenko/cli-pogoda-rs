@@ -9,6 +9,7 @@ pub mod forecast;
 pub mod geo;
 pub mod http;
 pub mod imgw;
+pub mod model;
 pub mod ui;
 pub mod warnings;
 pub mod weather;
@@ -159,12 +160,13 @@ fn print_warnings(
         .with_timezone(&chrono_tz::Europe::Warsaw)
         .date_naive();
 
-    // Meteo warnings, filtered to this point's powiat TERYT: one box per warning,
-    // coloured by level (3=red, 2=orange, 1=yellow), highest severity first.
-    if let Some(teryt) = imgw::reverse_teryt(client, token, loc.lat, loc.lon) {
-        if let Some(raw) = imgw::danepubliczne(client, "warningsmeteo") {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
-                let ws = warnings::ordered_for_display(warnings::meteo_warnings(&json, &teryt, today));
+    // Meteo warnings, filtered to this point's administrative area: one box per
+    // warning, coloured by level (3=red, 2=orange, 1=yellow), highest severity first.
+    if let Some(area) = imgw::area_code(client, token, loc.lat, loc.lon) {
+        if let Some(raw) = imgw::warning_feed(client, "warningsmeteo") {
+            if let Ok(items) = serde_json::from_str::<Vec<model::MeteoWarning>>(&raw) {
+                let ws =
+                    warnings::ordered_for_display(warnings::meteo_warnings(&items, &area, today));
                 for w in &ws {
                     emit_warning_box(w, colors, out);
                 }
@@ -176,22 +178,22 @@ fn print_warnings(
     // (levels 1/2/3) as coloured boxes, then the drought (susza, level -1) as a grey
     // notice.
     if let Some(cache) = cache {
-        if let Some(zlew) = imgw::ensure_zlew(client, cache) {
-            if let Some(basin) = warnings::find_basin(&zlew, loc.lat, loc.lon) {
-                if let Some(raw) = imgw::danepubliczne(client, "warningshydro") {
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
+        if let Some(basins) = imgw::ensure_basins(client, cache) {
+            if let Some(basin) = warnings::find_basin(&basins, loc.lat, loc.lon) {
+                if let Some(raw) = imgw::warning_feed(client, "warningshydro") {
+                    if let Ok(items) = serde_json::from_str::<Vec<model::HydroWarning>>(&raw) {
                         let ws = warnings::ordered_for_display(warnings::hydro_warnings(
-                            &json,
-                            &basin.kod,
+                            &items,
+                            &basin.code,
                             today,
                         ));
                         for w in &ws {
                             emit_warning_box(w, colors, out);
                         }
-                        if warnings::drought_hits_basin(&json, &basin.kod) {
+                        if warnings::drought_hits_basin(&items, &basin.code) {
                             let line = format!(
                                 "Susza hydrologiczna (hydrological drought) — {} basin",
-                                basin.nazwa
+                                basin.name
                             );
                             for l in ui::warn_box(&colors.grey, &colors.reset, "NOTICE", &[line]) {
                                 let _ = writeln!(out, "{l}");
@@ -287,7 +289,9 @@ fn print_help(cfg: &Config) {
     let current = cfg.get("weather_place").unwrap_or("unset");
     println!("Usage: imgw [-p|--place \"City,CC\"|\"lat,lon\"] [location]");
     println!("  Show the IMGW point forecast for a location, with active warnings.");
-    println!("  With no argument, uses `weather_place` from the config file (currently: {current}).");
+    println!(
+        "  With no argument, uses `weather_place` from the config file (currently: {current})."
+    );
     println!("  Examples: imgw -p \"Warsaw,PL\"   |   imgw \"52.24,21.03\"");
     if let Some(p) = Config::path() {
         println!("  Config: {}", p.display());
@@ -342,14 +346,23 @@ mod tests {
 
     #[test]
     fn place_flag_forms() {
-        assert_eq!(parse(&["-p", "Warsaw,PL"]).place.as_deref(), Some("Warsaw,PL"));
-        assert_eq!(parse(&["--place", "Krakow"]).place.as_deref(), Some("Krakow"));
+        assert_eq!(
+            parse(&["-p", "Warsaw,PL"]).place.as_deref(),
+            Some("Warsaw,PL")
+        );
+        assert_eq!(
+            parse(&["--place", "Krakow"]).place.as_deref(),
+            Some("Krakow")
+        );
         assert_eq!(parse(&["--place=Gdansk"]).place.as_deref(), Some("Gdansk"));
     }
 
     #[test]
     fn positional_and_help() {
-        assert_eq!(parse(&["52.24,21.03"]).positional.as_deref(), Some("52.24,21.03"));
+        assert_eq!(
+            parse(&["52.24,21.03"]).positional.as_deref(),
+            Some("52.24,21.03")
+        );
         assert!(parse(&["-h"]).help);
         assert!(parse(&["--help"]).help);
     }

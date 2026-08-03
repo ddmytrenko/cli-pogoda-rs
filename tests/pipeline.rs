@@ -23,7 +23,7 @@ fn endpoints_for(server: &ServerGuard) -> Endpoints {
     let base = server.url();
     Endpoints {
         meteo: format!("{base}/meteo"),
-        danepubliczne: format!("{base}/dane"),
+        warnings: format!("{base}/dane"),
         open_meteo: format!("{base}/om"),
         geocoding: format!("{base}/geo"),
         bigdatacloud: format!("{base}/bdc"),
@@ -131,17 +131,32 @@ fn happy_path_renders_forecast_and_both_warning_boxes() {
     // meteo warning box: level + probability in the caption, event/window headline,
     // description wrapped inside
     assert!(text.contains("WARNING! (level 3, 85%)"), "{text}");
-    assert!(text.contains("Upał — from 2099-01-04 12:00 until 2099-01-06 20:00"), "{text}");
+    assert!(
+        text.contains("Upał — from 2099-01-04 12:00 until 2099-01-06 20:00"),
+        "{text}"
+    );
     assert!(text.contains("Prognozuje się upały."), "{text}");
-    assert!(!text.contains("Brak"), "komentarz 'Brak.' must be dropped\n{text}");
+    assert!(
+        !text.contains("Brak"),
+        "komentarz 'Brak.' must be dropped\n{text}"
+    );
     // drought box, filtered to the point's basin
     assert!(text.contains("NOTICE"), "{text}");
-    assert!(text.contains("Susza hydrologiczna (hydrological drought) — TestBasin basin"), "{text}");
+    assert!(
+        text.contains("Susza hydrologiczna (hydrological drought) — TestBasin basin"),
+        "{text}"
+    );
     // forecast block
     assert!(text.contains("Weather in Krakow"), "{text}");
     assert!(text.contains("sunny"), "{text}");
-    assert!(text.contains("Wind: 3.0 m/s E (90°), gust 6.0 m/s"), "{text}");
-    assert!(text.contains("Sunrise: 05:00   Sunset: 20:00   (day 15h 00m)"), "{text}");
+    assert!(
+        text.contains("Wind: 3.0 m/s E (90°), gust 6.0 m/s"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Sunrise: 05:00   Sunset: 20:00   (day 15h 00m)"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -171,10 +186,18 @@ fn renders_warning_dates_relative_to_today() {
     let cache = temp_cache("relative-dates");
     let mut guards = mock_forecast(&mut server);
     guards.push(
-        server.mock("GET", "/bdc").match_query(Matcher::Any).with_body(r#"{"city":"Krakow"}"#).create(),
+        server
+            .mock("GET", "/bdc")
+            .match_query(Matcher::Any)
+            .with_body(r#"{"city":"Krakow"}"#)
+            .create(),
     );
     guards.push(
-        server.mock("GET", "/om").match_query(Matcher::Any).with_body(r#"{"timezone":"Europe/Warsaw"}"#).create(),
+        server
+            .mock("GET", "/om")
+            .match_query(Matcher::Any)
+            .with_body(r#"{"timezone":"Europe/Warsaw"}"#)
+            .create(),
     );
     guards.push(
         server
@@ -184,24 +207,48 @@ fn renders_warning_dates_relative_to_today() {
             .create(),
     );
     guards.push(
-        server.mock("GET", "/dane/warningsmeteo").match_query(Matcher::Any).with_body(meteo).create(),
+        server
+            .mock("GET", "/dane/warningsmeteo")
+            .match_query(Matcher::Any)
+            .with_body(meteo)
+            .create(),
     );
     guards.push(
-        server.mock("GET", "/meteo/dyn/data/zlew.json").match_query(Matcher::Any).with_body(ZLEW).create(),
+        server
+            .mock("GET", "/meteo/dyn/data/zlew.json")
+            .match_query(Matcher::Any)
+            .with_body(ZLEW)
+            .create(),
     );
     guards.push(
-        server.mock("GET", "/dane/warningshydro").match_query(Matcher::Any).with_body("[]").create(),
+        server
+            .mock("GET", "/dane/warningshydro")
+            .match_query(Matcher::Any)
+            .with_body("[]")
+            .create(),
     );
 
     let client = Client::with(endpoints_for(&server), Backoff::none());
     let mut out = Vec::new();
-    let code = imgw_rs::run_place(&client, "50.06,19.94", Some(cache.as_path()), &Colors::plain(), &mut out);
+    let code = imgw_rs::run_place(
+        &client,
+        "50.06,19.94",
+        Some(cache.as_path()),
+        &Colors::plain(),
+        &mut out,
+    );
     let text = String::from_utf8(out).unwrap();
 
     assert_eq!(code, 0, "{text}");
-    assert!(text.contains("from yesterday 06:00 until yesterday 18:00"), "{text}");
+    assert!(
+        text.contains("from yesterday 06:00 until yesterday 18:00"),
+        "{text}"
+    );
     assert!(text.contains("from 07:00 until 19:00"), "{text}"); // today -> time only
-    assert!(text.contains("from tomorrow 08:00 until tomorrow 20:00"), "{text}");
+    assert!(
+        text.contains("from tomorrow 08:00 until tomorrow 20:00"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -278,13 +325,22 @@ fn splits_warnings_into_per_level_boxes_in_severity_order() {
     let i_l3 = text.find("WARNING! (level 3)").expect("level 3 box");
     let i_l2 = text.find("WARNING! (level 2)").expect("level 2 box");
     let i_hydro = text.find("WARNING! (level 1)").expect("hydro level 1 box");
-    let i_susza = text.find("Susza hydrologiczna (hydrological drought)").expect("susza notice");
+    let i_susza = text
+        .find("Susza hydrologiczna (hydrological drought)")
+        .expect("susza notice");
     assert!(i_l3 < i_l2, "level 3 must precede level 2\n{text}");
     assert!(i_l2 < i_hydro, "meteo must precede hydro\n{text}");
-    assert!(i_hydro < i_susza, "hydro warnings must precede the drought notice\n{text}");
+    assert!(
+        i_hydro < i_susza,
+        "hydro warnings must precede the drought notice\n{text}"
+    );
     // the hydro box carries the event on its line
     assert!(text.contains("Wezbranie — from"), "{text}");
-    assert_eq!(text.matches("WARNING!").count(), 3, "3 warning boxes\n{text}");
+    assert_eq!(
+        text.matches("WARNING!").count(),
+        3,
+        "3 warning boxes\n{text}"
+    );
     assert_eq!(text.matches("NOTICE").count(), 1, "1 notice box\n{text}");
 }
 
