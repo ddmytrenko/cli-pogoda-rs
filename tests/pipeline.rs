@@ -142,6 +142,66 @@ fn happy_path_renders_forecast_and_both_warning_boxes() {
 }
 
 #[test]
+fn renders_warning_dates_relative_to_today() {
+    use chrono::Duration;
+
+    // Reference days in the same timezone run_place uses (Europe/Warsaw), computed
+    // against the real clock so this exercises the actual today-snapshot path.
+    let today = chrono::Utc::now()
+        .with_timezone(&chrono_tz::Europe::Warsaw)
+        .date_naive();
+    let ymd = |d: chrono::NaiveDate| d.format("%Y-%m-%d").to_string();
+    let (y, t0, tm) = (
+        ymd(today - Duration::days(1)),
+        ymd(today),
+        ymd(today + Duration::days(1)),
+    );
+
+    // Three same-level meteo warnings, one per relative day, so they land in one box.
+    let meteo = format!(
+        r#"[{{"nazwa_zdarzenia":"Upał","stopien":"2","obowiazuje_od":"{y} 06:00:00","obowiazuje_do":"{y} 18:00:00","teryt":["1261"]}},
+            {{"nazwa_zdarzenia":"Upał","stopien":"2","obowiazuje_od":"{t0} 07:00:00","obowiazuje_do":"{t0} 19:00:00","teryt":["1261"]}},
+            {{"nazwa_zdarzenia":"Upał","stopien":"2","obowiazuje_od":"{tm} 08:00:00","obowiazuje_do":"{tm} 20:00:00","teryt":["1261"]}}]"#
+    );
+
+    let mut server = Server::new();
+    let cache = temp_cache("relative-dates");
+    let mut guards = mock_forecast(&mut server);
+    guards.push(
+        server.mock("GET", "/bdc").match_query(Matcher::Any).with_body(r#"{"city":"Krakow"}"#).create(),
+    );
+    guards.push(
+        server.mock("GET", "/om").match_query(Matcher::Any).with_body(r#"{"timezone":"Europe/Warsaw"}"#).create(),
+    );
+    guards.push(
+        server
+            .mock("GET", "/meteo/api/v1/geo/search-reverse")
+            .match_query(Matcher::Any)
+            .with_body(r#"{"data":[{"teryt":"1261","dist":"0.5"}]}"#)
+            .create(),
+    );
+    guards.push(
+        server.mock("GET", "/dane/warningsmeteo").match_query(Matcher::Any).with_body(meteo).create(),
+    );
+    guards.push(
+        server.mock("GET", "/meteo/dyn/data/zlew.json").match_query(Matcher::Any).with_body(ZLEW).create(),
+    );
+    guards.push(
+        server.mock("GET", "/dane/warningshydro").match_query(Matcher::Any).with_body("[]").create(),
+    );
+
+    let client = Client::with(endpoints_for(&server), Backoff::none());
+    let mut out = Vec::new();
+    let code = imgw_rs::run_place(&client, "50.06,19.94", Some(cache.as_path()), &Colors::plain(), &mut out);
+    let text = String::from_utf8(out).unwrap();
+
+    assert_eq!(code, 0, "{text}");
+    assert!(text.contains("from yesterday 06:00 until yesterday 18:00"), "{text}");
+    assert!(text.contains("from 07:00 until 19:00"), "{text}"); // today -> time only
+    assert!(text.contains("from tomorrow 08:00 until tomorrow 20:00"), "{text}");
+}
+
+#[test]
 fn splits_warnings_into_per_level_boxes_in_severity_order() {
     let mut server = Server::new();
     let cache = temp_cache("levels");
