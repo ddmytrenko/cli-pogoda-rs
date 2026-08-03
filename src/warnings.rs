@@ -62,7 +62,8 @@ fn parse_level(s: &str) -> Option<i64> {
 }
 
 /// Merge a warning's main description with its remarks, dropping remarks that are
-/// absent or "Brak" (the feed's value for "none"). Whitespace-trimmed.
+/// absent or "Brak" (the feed's value for "none"). When both are present the remarks go
+/// in their own paragraph (blank line between). Whitespace-trimmed.
 fn merge_desc(main: &str, comment: &str) -> String {
     let main = main.trim();
     let comment = comment.trim();
@@ -71,7 +72,7 @@ fn merge_desc(main: &str, comment: &str) -> String {
     match (main.is_empty(), comment_is_none) {
         (_, true) => main.to_string(),
         (true, false) => comment.to_string(),
-        (false, false) => format!("{main} {comment}"),
+        (false, false) => format!("{main}\n\n{comment}"),
     }
 }
 
@@ -305,9 +306,10 @@ mod tests {
         assert_eq!(merge_desc("Upały.", "Brak."), "Upały.");
         assert_eq!(merge_desc("Upały.", "brak"), "Upały.");
         assert_eq!(merge_desc("Upały.", "  "), "Upały.");
+        // both present -> remarks on their own paragraph (blank line between)
         assert_eq!(
             merge_desc("Upały.", "Możliwe podtopienia."),
-            "Upały. Możliwe podtopienia."
+            "Upały.\n\nMożliwe podtopienia."
         );
         assert_eq!(
             merge_desc("", "Możliwe podtopienia."),
@@ -315,7 +317,7 @@ mod tests {
         );
         assert_eq!(merge_desc("  Upały.  ", ""), "Upały.");
         // "brak" as a substring of a real remark is kept
-        assert_eq!(merge_desc("X.", "Brak opadów."), "X. Brak opadów.");
+        assert_eq!(merge_desc("X.", "Brak opadów."), "X.\n\nBrak opadów.");
     }
 
     fn w(level: i64, from: &str, until: &str, headline: &str) -> Warning {
@@ -408,7 +410,7 @@ mod tests {
                 from: "2026-08-03 14:10".into(),
                 until: "2026-08-03 22:00".into(),
                 headline: "Gwałtowne wzrosty stanów wody — from 14:10 until 22:00".into(),
-                desc: "Wzrosty stanów wody. Możliwe podtopienia.".into(),
+                desc: "Wzrosty stanów wody.\n\nMożliwe podtopienia.".into(),
             }]
         );
     }

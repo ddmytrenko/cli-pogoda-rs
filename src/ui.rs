@@ -79,23 +79,33 @@ pub fn warn_box(col: &str, rst: &str, caption: &str, body: &[String]) -> Vec<Str
 }
 
 /// Word-wrap `text` to at most `width` characters per line, breaking on whitespace.
-/// A word longer than `width` gets its own (over-long) line. Empty text -> no lines.
+/// A word longer than `width` gets its own (over-long) line. Paragraphs (separated by a
+/// blank line, `\n\n`) are preserved: each is wrapped independently and separated by one
+/// empty line. Empty text -> no lines.
 pub fn wrap(text: &str, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
-    let mut cur = String::new();
-    for word in text.split_whitespace() {
-        if cur.is_empty() {
-            cur.push_str(word);
-        } else if cur.chars().count() + 1 + word.chars().count() <= width {
-            cur.push(' ');
-            cur.push_str(word);
-        } else {
-            lines.push(std::mem::take(&mut cur));
-            cur.push_str(word);
+    for paragraph in text.split("\n\n") {
+        if paragraph.split_whitespace().next().is_none() {
+            continue; // skip empty paragraphs
         }
-    }
-    if !cur.is_empty() {
-        lines.push(cur);
+        if !lines.is_empty() {
+            lines.push(String::new()); // blank line between paragraphs
+        }
+        let mut cur = String::new();
+        for word in paragraph.split_whitespace() {
+            if cur.is_empty() {
+                cur.push_str(word);
+            } else if cur.chars().count() + 1 + word.chars().count() <= width {
+                cur.push(' ');
+                cur.push_str(word);
+            } else {
+                lines.push(std::mem::take(&mut cur));
+                cur.push_str(word);
+            }
+        }
+        if !cur.is_empty() {
+            lines.push(cur);
+        }
     }
     lines
 }
@@ -146,5 +156,15 @@ mod tests {
         assert_eq!(wrap("aaaaaaaaaa bb", 5), vec!["aaaaaaaaaa", "bb"]);
         // wide chars counted by char, not byte
         assert_eq!(wrap("30°C do 33°C", 6), vec!["30°C", "do", "33°C"]);
+    }
+
+    #[test]
+    fn wrap_preserves_paragraph_breaks() {
+        // a blank line between paragraphs becomes one empty line, each wrapped alone
+        assert_eq!(wrap("a b\n\nc d", 10), vec!["a b", "", "c d"]);
+        assert_eq!(
+            wrap("one two three\n\ndone", 7),
+            vec!["one two", "three", "", "done"]
+        );
     }
 }
