@@ -71,6 +71,21 @@ Cached data (API token, basin polygons) lives under
 ## Development
 
 ```sh
-cargo test     # unit tests (pure logic: geocoding parse, forecast parse, warnings, box drawing)
+cargo test     # unit + integration tests
 cargo build
 ```
+
+Tests come in two layers:
+
+- **Unit tests** (in each module) cover the pure logic: place parsing, forecast
+  parsing, warning filtering, point-in-polygon, box drawing, and the retry/backoff
+  schedule.
+- **Integration tests** (`tests/`) run against a local mock HTTP server
+  ([mockito](https://crates.io/crates/mockito)). `tests/retry.rs` verifies the
+  retry policy against real HTTP statuses (404/422/5xx are retried; a later 200
+  recovers; it gives up after the cap). `tests/pipeline.rs` drives the whole
+  `run_place` flow — geocode → token → forecast → warnings → render — with every
+  endpoint mocked, asserting on the rendered output.
+
+Endpoints are injectable (`Client::with(Endpoints { .. }, ..)`), which is how the
+integration tests point every call at the mock server.
