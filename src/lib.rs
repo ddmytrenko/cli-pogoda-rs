@@ -70,8 +70,31 @@ pub fn run_place(
     colors: &Colors,
     out: &mut impl Write,
 ) -> i32 {
-    // 1. Resolve to lat/lon + display name + timezone.
-    let loc = match geo::resolve(client, place) {
+    // Wave 1 — everything that needs neither the token nor the coordinates runs
+    // concurrently: location resolution, the app token (scrape, else fall back), both
+    // (nationwide) warning feeds, and the river-basin polygons. `thread::scope` lets the
+    // threads borrow `client` etc. and guarantees they're all joined before it returns,
+    // so no `'static`/`Arc` is needed and the compiler proves there are no data races.
+    let (loc_res, token, meteo_raw, hydro_raw, basins) = std::thread::scope(|s| {
+        let loc = s.spawn(|| geo::resolve(client, place));
+        let token = s.spawn(|| {
+            cache
+                .and_then(|d| imgw::token(client, d, false).ok())
+                .unwrap_or_else(|| imgw::FALLBACK_TOKEN.to_string())
+        });
+        let meteo = s.spawn(|| imgw::warning_feed(client, "warningsmeteo"));
+        let hydro = s.spawn(|| imgw::warning_feed(client, "warningshydro"));
+        let basins = s.spawn(|| cache.and_then(|d| imgw::ensure_basins(client, d)));
+        (
+            loc.join().unwrap(),
+            token.join().unwrap(),
+            meteo.join().unwrap(),
+            hydro.join().unwrap(),
+            basins.join().unwrap(),
+        )
+    });
+
+    let loc = match loc_res {
         Ok(l) => l,
         Err(e) => {
             eprintln!("imgw: {e}");
@@ -79,24 +102,26 @@ pub fn run_place(
         }
     };
 
-    // 2. Point forecast. Resolve the token; on failure refresh it once.
-    let mut token = cache
-        .and_then(|d| imgw::token(client, d, false).ok())
-        .unwrap_or_else(|| imgw::FALLBACK_TOKEN.to_string());
+    // Wave 2 — the two calls that need the token (and coordinates) run concurrently:
+    // the point forecast and the area-code lookup that filters the meteo feed.
+    let mut token = token;
+    let (mut body, mut area) = fetch_forecast_and_area(client, &token, &loc);
 
-    let mut body = imgw::forecast(client, &token, loc.lat, loc.lon)
-        .ok()
-        .filter(|b| !b.trim().is_empty());
+    // On an empty forecast the cached token may be stale: refresh once and re-run
+    // wave 2 with the fresh token (rare path).
     if body.is_none() {
         if let Some(d) = cache {
-            if let Ok(t) = imgw::token(client, d, true) {
-                token = t;
-                body = imgw::forecast(client, &token, loc.lat, loc.lon)
-                    .ok()
-                    .filter(|b| !b.trim().is_empty());
+            if let Ok(fresh) = imgw::token(client, d, true) {
+                token = fresh;
+                let (body2, area2) = fetch_forecast_and_area(client, &token, &loc);
+                body = body2;
+                if area.is_none() {
+                    area = area2;
+                }
             }
         }
     }
+
     let body = match body {
         Some(b) => b,
         None => {
@@ -116,14 +141,42 @@ pub fn run_place(
         }
     };
 
-    // 3. Warning boxes, above the forecast: meteo (loud, red) then drought (quiet,
-    // grey), each filtered to this exact point.
-    print_warnings(client, colors, &token, &loc, cache, out);
-
-    // 4. The forecast itself.
+    // Render (sequential, ordered) from the already-fetched data: warning boxes above
+    // the forecast, then the forecast itself.
+    let today = chrono::Utc::now()
+        .with_timezone(&chrono_tz::Europe::Warsaw)
+        .date_naive();
+    render_warnings(
+        colors,
+        today,
+        &loc,
+        area.as_deref(),
+        meteo_raw.as_deref(),
+        hydro_raw.as_deref(),
+        basins.as_deref(),
+        out,
+    );
     print_forecast(&fc, &loc, out);
 
     0
+}
+
+/// Wave 2: fetch the point forecast (non-empty body) and the area code concurrently,
+/// both using `token`. Returns `(forecast_body, area_code)`.
+fn fetch_forecast_and_area(
+    client: &Client,
+    token: &str,
+    loc: &geo::Location,
+) -> (Option<String>, Option<String>) {
+    std::thread::scope(|s| {
+        let body = s.spawn(|| {
+            imgw::forecast(client, token, loc.lat, loc.lon)
+                .ok()
+                .filter(|b| !b.trim().is_empty())
+        });
+        let area = s.spawn(|| imgw::area_code(client, token, loc.lat, loc.lon));
+        (body.join().unwrap(), area.join().unwrap())
+    })
 }
 
 /// Max characters per line when wrapping a warning's description.
@@ -146,30 +199,28 @@ fn emit_warning_box(w: &warnings::Warning, colors: &Colors, out: &mut impl Write
     }
 }
 
-/// Write any warning boxes that apply to this point.
-fn print_warnings(
-    client: &Client,
+/// Render the warning boxes from already-fetched data (pure: no network). `area` is the
+/// point's administrative-area code, `meteo_raw`/`hydro_raw` the raw feed bodies, and
+/// `basins` the path to the basin polygons. Meteo boxes first, then hydro boxes, then
+/// the drought notice.
+#[allow(clippy::too_many_arguments)]
+fn render_warnings(
     colors: &Colors,
-    token: &str,
+    today: chrono::NaiveDate,
     loc: &geo::Location,
-    cache: Option<&Path>,
+    area: Option<&str>,
+    meteo_raw: Option<&str>,
+    hydro_raw: Option<&str>,
+    basins: Option<&Path>,
     out: &mut impl Write,
 ) {
-    // "Today" for relative timestamp formatting, in the warnings' timezone (Poland).
-    let today = chrono::Utc::now()
-        .with_timezone(&chrono_tz::Europe::Warsaw)
-        .date_naive();
-
     // Meteo warnings, filtered to this point's administrative area: one box per
     // warning, coloured by level (3=red, 2=orange, 1=yellow), highest severity first.
-    if let Some(area) = imgw::area_code(client, token, loc.lat, loc.lon) {
-        if let Some(raw) = imgw::warning_feed(client, "warningsmeteo") {
-            if let Ok(items) = serde_json::from_str::<Vec<model::MeteoWarning>>(&raw) {
-                let ws =
-                    warnings::ordered_for_display(warnings::meteo_warnings(&items, &area, today));
-                for w in &ws {
-                    emit_warning_box(w, colors, out);
-                }
+    if let (Some(area), Some(raw)) = (area, meteo_raw) {
+        if let Ok(items) = serde_json::from_str::<Vec<model::MeteoWarning>>(raw) {
+            let ws = warnings::ordered_for_display(warnings::meteo_warnings(&items, area, today));
+            for w in &ws {
+                emit_warning_box(w, colors, out);
             }
         }
     }
@@ -177,28 +228,24 @@ fn print_warnings(
     // Hydrological warnings, filtered to this point's river basin: regular warnings
     // (levels 1/2/3) as coloured boxes, then the drought (susza, level -1) as a grey
     // notice.
-    if let Some(cache) = cache {
-        if let Some(basins) = imgw::ensure_basins(client, cache) {
-            if let Some(basin) = warnings::find_basin(&basins, loc.lat, loc.lon) {
-                if let Some(raw) = imgw::warning_feed(client, "warningshydro") {
-                    if let Ok(items) = serde_json::from_str::<Vec<model::HydroWarning>>(&raw) {
-                        let ws = warnings::ordered_for_display(warnings::hydro_warnings(
-                            &items,
-                            &basin.code,
-                            today,
-                        ));
-                        for w in &ws {
-                            emit_warning_box(w, colors, out);
-                        }
-                        if warnings::drought_hits_basin(&items, &basin.code) {
-                            let line = format!(
-                                "Susza hydrologiczna (hydrological drought) — {} basin",
-                                basin.name
-                            );
-                            for l in ui::warn_box(&colors.grey, &colors.reset, "NOTICE", &[line]) {
-                                let _ = writeln!(out, "{l}");
-                            }
-                        }
+    if let (Some(basins), Some(raw)) = (basins, hydro_raw) {
+        if let Some(basin) = warnings::find_basin(basins, loc.lat, loc.lon) {
+            if let Ok(items) = serde_json::from_str::<Vec<model::HydroWarning>>(raw) {
+                let ws = warnings::ordered_for_display(warnings::hydro_warnings(
+                    &items,
+                    &basin.code,
+                    today,
+                ));
+                for w in &ws {
+                    emit_warning_box(w, colors, out);
+                }
+                if warnings::drought_hits_basin(&items, &basin.code) {
+                    let line = format!(
+                        "Susza hydrologiczna (hydrological drought) — {} basin",
+                        basin.name
+                    );
+                    for l in ui::warn_box(&colors.grey, &colors.reset, "NOTICE", &[line]) {
+                        let _ = writeln!(out, "{l}");
                     }
                 }
             }
