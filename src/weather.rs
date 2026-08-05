@@ -1,5 +1,7 @@
 //! Pure weather-text helpers: a bearing-to-compass converter and a sky-condition
-//! describer. No I/O.
+//! describer. No I/O. Display words come from the `text` module.
+
+use crate::text::{self, PrecipKind};
 
 /// Bearing (degrees) -> 16-point compass point (N, NNE, NE, …), rounded to the
 /// nearest 22.5°. Empty/non-numeric input -> "". Negative bearings wrap into range.
@@ -27,22 +29,21 @@ pub fn condition(icon: &str, rain: f64, snow: f64, prec: f64) -> String {
     let night = dn == Some('n');
 
     let mut sky: String = match cloud {
-        Some('0') => (if night { "clear" } else { "sunny" }).into(),
-        Some('1') | Some('2') => (if night {
-            "mostly clear"
+        Some('0') => (if night {
+            text::SKY_CLEAR_NIGHT
         } else {
-            "mostly sunny"
+            text::SKY_CLEAR_DAY
         })
         .into(),
-        Some('3') | Some('4') => "partly cloudy".into(),
-        Some('5') | Some('6') => "mostly cloudy".into(),
-        Some('7') => "cloudy".into(),
-        Some('8') => "overcast".into(),
+        Some('1') | Some('2') => text::SKY_FEW.into(),
+        Some('3') | Some('4') => text::SKY_SCATTERED.into(),
+        Some('5') | Some('6') | Some('7') => text::SKY_BROKEN.into(),
+        Some('8') => text::SKY_OVERCAST.into(),
         _ => {
             if icon.is_empty() {
                 String::new()
             } else {
-                "unknown".into()
+                text::SKY_UNKNOWN.into()
             }
         }
     };
@@ -56,27 +57,21 @@ pub fn condition(icon: &str, rain: f64, snow: f64, prec: f64) -> String {
 
     if (!seg.is_empty() && seg != "z00") || rain > 0.0 || snow > 0.0 || prec > 0.0 {
         let mut mm = if prec > rain { prec } else { rain };
-        let ptype = if snow > 0.0 {
-            "snow"
+        let kind = if snow > 0.0 {
+            PrecipKind::Snow
         } else if rain > 0.0 || mm > 0.0 {
-            "rain"
+            PrecipKind::Rain
         } else {
-            "precipitation"
+            PrecipKind::Mixed
         };
         if snow > mm {
             mm = snow;
         }
-        let intens = if mm < 0.3 {
-            "light"
-        } else if mm < 1.5 {
-            "moderate"
-        } else {
-            "heavy"
-        };
+        let phrase = text::precip_phrase(kind, mm);
         if sky.is_empty() {
-            sky = format!("{intens} {ptype}");
+            sky = phrase;
         } else {
-            sky = format!("{sky}, {intens} {ptype}");
+            sky = format!("{sky}, {phrase}");
         }
     }
     sky
@@ -111,21 +106,30 @@ mod tests {
 
     #[test]
     fn condition_sky_tiers() {
-        assert_eq!(condition("n0z00d", 0.0, 0.0, 0.0), "sunny");
-        assert_eq!(condition("n0z00n", 0.0, 0.0, 0.0), "clear");
-        assert_eq!(condition("n1z00d", 0.0, 0.0, 0.0), "mostly sunny");
-        assert_eq!(condition("n3z00d", 0.0, 0.0, 0.0), "partly cloudy");
-        assert_eq!(condition("n5z00d", 0.0, 0.0, 0.0), "mostly cloudy");
-        assert_eq!(condition("n8z00d", 0.0, 0.0, 0.0), "overcast");
+        assert_eq!(condition("n0z00d", 0.0, 0.0, 0.0), "słonecznie");
+        assert_eq!(condition("n0z00n", 0.0, 0.0, 0.0), "bezchmurnie");
+        assert_eq!(condition("n1z00d", 0.0, 0.0, 0.0), "zachmurzenie małe");
+        assert_eq!(
+            condition("n3z00d", 0.0, 0.0, 0.0),
+            "zachmurzenie umiarkowane"
+        );
+        assert_eq!(condition("n5z00d", 0.0, 0.0, 0.0), "zachmurzenie duże");
+        assert_eq!(condition("n8z00d", 0.0, 0.0, 0.0), "zachmurzenie całkowite");
     }
 
     #[test]
     fn condition_with_precip() {
-        assert_eq!(condition("n7z60d", 0.5, 0.0, 0.5), "cloudy, moderate rain");
-        assert_eq!(condition("n8z00d", 0.0, 2.0, 2.0), "overcast, heavy snow");
+        assert_eq!(
+            condition("n7z60d", 0.5, 0.0, 0.5),
+            "zachmurzenie duże, umiarkowany deszcz"
+        );
+        assert_eq!(
+            condition("n8z00d", 0.0, 2.0, 2.0),
+            "zachmurzenie całkowite, silny śnieg"
+        );
         assert_eq!(
             condition("n1z00d", 0.1, 0.0, 0.1),
-            "mostly sunny, light rain"
+            "zachmurzenie małe, słaby deszcz"
         );
     }
 

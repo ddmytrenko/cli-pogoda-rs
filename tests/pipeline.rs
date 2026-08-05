@@ -130,9 +130,9 @@ fn happy_path_renders_forecast_and_both_warning_boxes() {
     assert_eq!(code, 0, "output was:\n{text}");
     // meteo warning box: level + probability in the caption, event/window headline,
     // description wrapped inside
-    assert!(text.contains("WARNING! (level 3, 85%)"), "{text}");
+    assert!(text.contains("OSTRZEŻENIE! (stopień 3, 85%)"), "{text}");
     assert!(
-        text.contains("Upał — from 2099-01-04 12:00 until 2099-01-06 20:00"),
+        text.contains("Upał — od 2099-01-04 12:00 do 2099-01-06 20:00"),
         "{text}"
     );
     assert!(text.contains("Prognozuje się upały."), "{text}");
@@ -141,20 +141,20 @@ fn happy_path_renders_forecast_and_both_warning_boxes() {
         "komentarz 'Brak.' must be dropped\n{text}"
     );
     // drought box, filtered to the point's basin
-    assert!(text.contains("NOTICE"), "{text}");
+    assert!(text.contains("UWAGA"), "{text}");
     assert!(
-        text.contains("Susza hydrologiczna (hydrological drought) — TestBasin basin"),
+        text.contains("Susza hydrologiczna — zlewnia TestBasin"),
         "{text}"
     );
     // forecast block
-    assert!(text.contains("Weather in Krakow"), "{text}");
-    assert!(text.contains("sunny"), "{text}");
+    assert!(text.contains("Pogoda: Krakow"), "{text}");
+    assert!(text.contains("słonecznie"), "{text}");
     assert!(
-        text.contains("Wind: 3.0 m/s E (90°), gust 6.0 m/s"),
+        text.contains("Wiatr: 3.0 m/s E (90°), w porywach 6.0 m/s"),
         "{text}"
     );
     assert!(
-        text.contains("Sunrise: 05:00   Sunset: 20:00   (day 15h 00m)"),
+        text.contains("Wschód: 05:00   Zachód: 20:00   (dzień 15h 00m)"),
         "{text}"
     );
 }
@@ -240,15 +240,9 @@ fn renders_warning_dates_relative_to_today() {
     let text = String::from_utf8(out).unwrap();
 
     assert_eq!(code, 0, "{text}");
-    assert!(
-        text.contains("from yesterday 06:00 until yesterday 18:00"),
-        "{text}"
-    );
-    assert!(text.contains("from 07:00 until 19:00"), "{text}"); // today -> time only
-    assert!(
-        text.contains("from tomorrow 08:00 until tomorrow 20:00"),
-        "{text}"
-    );
+    assert!(text.contains("od wczoraj 06:00 do wczoraj 18:00"), "{text}");
+    assert!(text.contains("od 07:00 do 19:00"), "{text}"); // today -> time only
+    assert!(text.contains("od jutra 08:00 do jutra 20:00"), "{text}");
 }
 
 #[test]
@@ -322,11 +316,13 @@ fn splits_warnings_into_per_level_boxes_in_severity_order() {
 
     // Four boxes: meteo level 3, meteo level 2, hydro level 1, susza notice — in order.
     // Levels are in the captions; the hydro level-1 box is the only "(level 1)".
-    let i_l3 = text.find("WARNING! (level 3)").expect("level 3 box");
-    let i_l2 = text.find("WARNING! (level 2)").expect("level 2 box");
-    let i_hydro = text.find("WARNING! (level 1)").expect("hydro level 1 box");
+    let i_l3 = text.find("OSTRZEŻENIE! (stopień 3)").expect("level 3 box");
+    let i_l2 = text.find("OSTRZEŻENIE! (stopień 2)").expect("level 2 box");
+    let i_hydro = text
+        .find("OSTRZEŻENIE! (stopień 1)")
+        .expect("hydro level 1 box");
     let i_susza = text
-        .find("Susza hydrologiczna (hydrological drought)")
+        .find("Susza hydrologiczna — zlewnia")
         .expect("susza notice");
     assert!(i_l3 < i_l2, "level 3 must precede level 2\n{text}");
     assert!(i_l2 < i_hydro, "meteo must precede hydro\n{text}");
@@ -335,13 +331,13 @@ fn splits_warnings_into_per_level_boxes_in_severity_order() {
         "hydro warnings must precede the drought notice\n{text}"
     );
     // the hydro box carries the event on its line
-    assert!(text.contains("Wezbranie — from"), "{text}");
+    assert!(text.contains("Wezbranie — od"), "{text}");
     assert_eq!(
-        text.matches("WARNING!").count(),
+        text.matches("OSTRZEŻENIE!").count(),
         3,
         "3 warning boxes\n{text}"
     );
-    assert_eq!(text.matches("NOTICE").count(), 1, "1 notice box\n{text}");
+    assert_eq!(text.matches("UWAGA").count(), 1, "1 notice box\n{text}");
 }
 
 #[test]
@@ -405,9 +401,9 @@ fn no_warnings_renders_only_the_forecast() {
     let text = String::from_utf8(out).unwrap();
 
     assert_eq!(code, 0, "{text}");
-    assert!(!text.contains("WARNING!"), "{text}");
-    assert!(!text.contains("NOTICE"), "{text}");
-    assert!(text.contains("Weather in Krakow"), "{text}");
+    assert!(!text.contains("OSTRZEŻENIE!"), "{text}");
+    assert!(!text.contains("UWAGA"), "{text}");
+    assert!(text.contains("Pogoda: Krakow"), "{text}");
 }
 
 #[test]
@@ -461,7 +457,7 @@ fn falls_back_to_the_builtin_token_when_scraping_fails() {
     let text = String::from_utf8(out).unwrap();
 
     assert_eq!(code, 0, "{text}");
-    assert!(text.contains("Weather in Krakow"), "{text}");
+    assert!(text.contains("Pogoda: Krakow"), "{text}");
 }
 
 #[test]

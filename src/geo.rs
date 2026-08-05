@@ -7,6 +7,7 @@ use crate::model::{
     GeocodeQuery, GeocodeResult, GeocodeResults, OpenMeteoForecast, ReverseGeocode,
     ReverseGeocodeQuery, TimezoneQuery,
 };
+use crate::text;
 use anyhow::{anyhow, Result};
 
 /// How many forward-geocoding candidates to fetch so we can pick the one in the
@@ -130,15 +131,12 @@ fn resolve_name(client: &Client, town: &str, country: Option<&str>) -> Result<Lo
     };
     let body = client
         .get_query(&client.endpoints.geocoding, &query, 3)
-        .map_err(|_| anyhow!("geocoding request failed"))?;
+        .map_err(|_| anyhow!(text::GEOCODE_FAILED))?;
 
     let parsed: GeocodeResults =
-        serde_json::from_str(&body).map_err(|_| anyhow!("geocoding request failed"))?;
+        serde_json::from_str(&body).map_err(|_| anyhow!(text::GEOCODE_FAILED))?;
 
-    let not_found = || match country {
-        Some(cc) => anyhow!("could not geocode \"{town}\" in {cc}"),
-        None => anyhow!("could not geocode \"{town}\""),
-    };
+    let not_found = || anyhow!(text::not_geocoded(town, country));
     let hit = select_result(&parsed.results, country).ok_or_else(not_found)?;
 
     let (lat, lon) = match (hit.latitude, hit.longitude) {

@@ -10,6 +10,7 @@
 //! fetches live in imgw.rs.
 
 use crate::model::{BasinCollection, HydroWarning, MeteoWarning};
+use crate::text;
 use chrono::NaiveDate;
 use serde_json::Value;
 use std::path::Path;
@@ -98,8 +99,8 @@ fn humanize_ts(ts: &str, today: NaiveDate) -> String {
     match NaiveDate::parse_from_str(date_part, "%Y-%m-%d") {
         Ok(d) => match (d - today).num_days() {
             0 => time.to_string(),
-            -1 => format!("yesterday {time}"),
-            1 => format!("tomorrow {time}"),
+            -1 => format!("{} {time}", text::YESTERDAY),
+            1 => format!("{} {time}", text::TOMORROW),
             _ => ts.to_string(),
         },
         Err(_) => ts.to_string(),
@@ -124,7 +125,7 @@ pub fn meteo_warnings(warnings: &[MeteoWarning], area: &str, today: NaiveDate) -
                 prob: w.probability.clone(),
                 from: from.to_string(),
                 until: until.to_string(),
-                headline: format!("{} — from {from_disp} until {until_disp}", w.event),
+                headline: text::warning_headline(&w.event, &from_disp, &until_disp),
                 desc,
             })
         })
@@ -158,7 +159,7 @@ pub fn hydro_warnings(
                 prob: w.probability.clone(),
                 from: from.to_string(),
                 until: until.to_string(),
-                headline: format!("{} — from {from_disp} until {until_disp}", w.event),
+                headline: text::warning_headline(&w.event, &from_disp, &until_disp),
                 desc,
             })
         })
@@ -294,7 +295,7 @@ mod tests {
                 prob: "85".into(),
                 from: "2026-08-04 12:00".into(),  // tomorrow
                 until: "2026-08-01 20:00".into(), // two days back -> absolute
-                headline: "Upał — from tomorrow 12:00 until 2026-08-01 20:00".into(),
+                headline: "Upał — od jutra 12:00 do 2026-08-01 20:00".into(),
                 desc: "Prognozuje się upały.".into(), // remarks "Brak." dropped
             }]
         );
@@ -342,8 +343,8 @@ mod tests {
     fn humanize_ts_uses_relative_days_around_today() {
         let today = NaiveDate::from_ymd_opt(2026, 8, 3).unwrap();
         assert_eq!(humanize_ts("2026-08-03 09:05", today), "09:05"); // today -> time only
-        assert_eq!(humanize_ts("2026-08-02 23:59", today), "yesterday 23:59");
-        assert_eq!(humanize_ts("2026-08-04 06:00", today), "tomorrow 06:00");
+        assert_eq!(humanize_ts("2026-08-02 23:59", today), "wczoraj 23:59");
+        assert_eq!(humanize_ts("2026-08-04 06:00", today), "jutra 06:00");
         assert_eq!(humanize_ts("2026-08-06 20:00", today), "2026-08-06 20:00"); // further out
         assert_eq!(humanize_ts("2026-07-31 12:00", today), "2026-07-31 12:00"); // 3 days back
         assert_eq!(humanize_ts("", today), ""); // non-conforming
@@ -409,7 +410,7 @@ mod tests {
                 prob: "80".into(),
                 from: "2026-08-03 14:10".into(),
                 until: "2026-08-03 22:00".into(),
-                headline: "Gwałtowne wzrosty stanów wody — from 14:10 until 22:00".into(),
+                headline: "Gwałtowne wzrosty stanów wody — od 14:10 do 22:00".into(),
                 desc: "Wzrosty stanów wody.\n\nMożliwe podtopienia.".into(),
             }]
         );

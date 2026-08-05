@@ -10,6 +10,7 @@ pub mod geo;
 pub mod http;
 pub mod imgw;
 pub mod model;
+pub mod text;
 pub mod ui;
 pub mod warnings;
 pub mod weather;
@@ -45,9 +46,9 @@ pub fn run() -> i32 {
     let place = match place {
         Some(p) if !p.trim().is_empty() => p,
         _ => {
-            eprintln!("Error: no location specified and `weather_place` is not set");
-            eprintln!("Usage: imgw [-p|--place \"City,CC\"|\"lat,lon\"] [location]");
-            eprintln!("Example: imgw -p \"Warsaw,PL\"");
+            eprintln!("{}", text::ERR_NO_LOCATION);
+            eprintln!("{}", text::USAGE);
+            eprintln!("{}", text::EXAMPLE);
             return 1;
         }
     };
@@ -125,7 +126,7 @@ pub fn run_place(
     let body = match body {
         Some(b) => b,
         None => {
-            eprintln!("imgw: IMGW forecast request failed");
+            eprintln!("imgw: {}", text::FORECAST_FAILED);
             return 1;
         }
     };
@@ -134,8 +135,8 @@ pub fn run_place(
         Ok(f) => f,
         Err(_) => {
             eprintln!(
-                "imgw: no forecast data for \"{}\" ({}, {})",
-                loc.label, loc.lat, loc.lon
+                "imgw: {}",
+                text::no_forecast_data(&loc.label, loc.lat, loc.lon)
             );
             return 1;
         }
@@ -157,6 +158,9 @@ pub fn run_place(
         out,
     );
     print_forecast(&fc, &loc, out);
+
+    // Source attribution, under every forecast.
+    let _ = writeln!(out, "\n{}", text::SOURCE);
 
     0
 }
@@ -185,11 +189,7 @@ const DESC_WRAP_WIDTH: usize = 72;
 /// Render one warning as a coloured box: level + probability in the caption, the
 /// event/window headline first, then the wrapped description (if any).
 fn emit_warning_box(w: &warnings::Warning, colors: &Colors, out: &mut impl Write) {
-    let caption = if w.prob.is_empty() {
-        format!("WARNING! (level {})", w.level)
-    } else {
-        format!("WARNING! (level {}, {}%)", w.level, w.prob)
-    };
+    let caption = text::warning_caption(w.level, &w.prob);
     let mut body = vec![w.headline.clone()];
     if !w.desc.is_empty() {
         body.extend(ui::wrap(&w.desc, DESC_WRAP_WIDTH));
@@ -240,11 +240,10 @@ fn render_warnings(
                     emit_warning_box(w, colors, out);
                 }
                 if warnings::drought_hits_basin(&items, &basin.code) {
-                    let line = format!(
-                        "Susza hydrologiczna (hydrological drought) — {} basin",
-                        basin.name
-                    );
-                    for l in ui::warn_box(&colors.grey, &colors.reset, "NOTICE", &[line]) {
+                    let line = text::drought_notice(&basin.name);
+                    for l in
+                        ui::warn_box(&colors.grey, &colors.reset, text::NOTICE_CAPTION, &[line])
+                    {
                         let _ = writeln!(out, "{l}");
                     }
                 }
@@ -263,55 +262,49 @@ fn print_forecast(fc: &forecast::Forecast, loc: &geo::Location, out: &mut impl W
     };
     let _ = writeln!(
         out,
-        " Weather in {}: {:.1} °C{}  (IMGW HYBRID, feels {:.1} °C)",
-        loc.label, fc.temp, cond_suffix, fc.feels
+        "{}",
+        text::banner(&loc.label, fc.temp, &cond_suffix, fc.feels)
     );
 
     let h = fc.hrs.round() as i64;
     if fc.prec > 0.0 || fc.prec_sum > 0.0 {
-        let ptype = if fc.rain_sum > 0.0 && fc.snow_sum > 0.0 {
-            "Rain & snow"
+        let kind = if fc.rain_sum > 0.0 && fc.snow_sum > 0.0 {
+            text::PRECIP_RAIN_AND_SNOW
         } else if fc.snow_sum > 0.0 {
-            "Snow"
+            text::PRECIP_SNOW
         } else if fc.rain_sum > 0.0 {
-            "Rain"
+            text::PRECIP_RAIN
         } else {
-            "Precipitation"
+            text::PRECIP_MIXED
         };
-        let _ = writeln!(
-            out,
-            "   {}: {:.1} mm now, {:.1} mm over next {}h",
-            ptype, fc.prec, fc.prec_sum, h
-        );
+        let _ = writeln!(out, "{}", text::precip_line(kind, fc.prec, fc.prec_sum, h));
     } else {
-        let _ = writeln!(out, "   Precipitation: none (dry next {h}h)");
+        let _ = writeln!(out, "{}", text::precip_none(h));
     }
 
     if !fc.wspeed.is_empty() {
         let card = weather::cardinal(&fc.wdir);
-        let _ = write!(out, "   Wind: {} m/s {} ({}°)", fc.wspeed, card, fc.wdir);
-        if !fc.gust.is_empty() {
-            let _ = write!(out, ", gust {} m/s", fc.gust);
-        }
-        let _ = writeln!(out);
+        let gust = (!fc.gust.is_empty()).then_some(fc.gust.as_str());
+        let _ = writeln!(
+            out,
+            "{}",
+            text::wind_line(&fc.wspeed, &card, &fc.wdir, gust)
+        );
     }
     if fc.pres > 0.0 {
-        let _ = writeln!(out, "   Pressure: {:.0} hPa", fc.pres);
+        let _ = writeln!(out, "{}", text::pressure_line(fc.pres));
     }
     if !fc.hum.is_empty() {
-        let _ = writeln!(out, "   Humidity: {}%", fc.hum);
+        let _ = writeln!(out, "{}", text::humidity_line(&fc.hum));
     }
     if !fc.cloud.is_empty() {
-        let _ = writeln!(out, "   Cloud: {}%", fc.cloud);
+        let _ = writeln!(out, "{}", text::cloud_line(&fc.cloud));
     }
     if let Some((sr, ss, daysec)) = sun_times(&fc.sunrise, &fc.sunset, &loc.tz) {
         let _ = writeln!(
             out,
-            "   Sunrise: {}   Sunset: {}   (day {}h {:02}m)",
-            sr,
-            ss,
-            daysec / 3600,
-            (daysec % 3600) / 60
+            "{}",
+            text::sun_line(&sr, &ss, daysec / 3600, (daysec % 3600) / 60)
         );
     }
 }
@@ -333,15 +326,13 @@ fn sun_times(sunrise: &str, sunset: &str, tz: &str) -> Option<(String, String, i
 }
 
 fn print_help(cfg: &Config) {
-    let current = cfg.get("weather_place").unwrap_or("unset");
-    println!("Usage: imgw [-p|--place \"City,CC\"|\"lat,lon\"] [location]");
-    println!("  Show the IMGW point forecast for a location, with active warnings.");
-    println!(
-        "  With no argument, uses `weather_place` from the config file (currently: {current})."
-    );
-    println!("  Examples: imgw -p \"Warsaw,PL\"   |   imgw \"52.24,21.03\"");
+    let current = cfg.get("weather_place").unwrap_or(text::UNSET);
+    println!("{}", text::USAGE);
+    println!("{}", text::HELP_DESC);
+    println!("{}", text::help_default(current));
+    println!("{}", text::HELP_EXAMPLES);
     if let Some(p) = Config::path() {
-        println!("  Config: {}", p.display());
+        println!("{}", text::help_config(&p.display().to_string()));
     }
 }
 
@@ -361,12 +352,12 @@ impl Args {
             match a.as_str() {
                 "-h" | "--help" => help = true,
                 "-p" | "--place" => {
-                    place = Some(it.next().ok_or("Error: -p/--place needs a value")?);
+                    place = Some(it.next().ok_or(text::ERR_PLACE_NEEDS_VALUE)?);
                 }
                 s if s.starts_with("--place=") => place = Some(s["--place=".len()..].to_string()),
                 s if s.starts_with("-p=") => place = Some(s["-p=".len()..].to_string()),
                 s if s.starts_with('-') && s != "-" => {
-                    return Err(format!("Error: unknown option `{s}`"));
+                    return Err(text::err_unknown_option(s));
                 }
                 s => {
                     if positional.is_none() {
