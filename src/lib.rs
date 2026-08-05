@@ -377,14 +377,20 @@ mod tests {
             parse(&["52.24,21.03"]).positional.as_deref(),
             Some("52.24,21.03")
         );
-        assert_eq!(parse(&["Warszawa,PL"]).positional.as_deref(), Some("Warszawa,PL"));
+        assert_eq!(
+            parse(&["Warszawa,PL"]).positional.as_deref(),
+            Some("Warszawa,PL")
+        );
         assert!(parse(&["-h"]).help);
         assert!(parse(&["--help"]).help);
     }
 
     #[test]
     fn first_positional_wins() {
-        assert_eq!(parse(&["Kraków", "Gdańsk"]).positional.as_deref(), Some("Kraków"));
+        assert_eq!(
+            parse(&["Kraków", "Gdańsk"]).positional.as_deref(),
+            Some("Kraków")
+        );
     }
 
     #[test]

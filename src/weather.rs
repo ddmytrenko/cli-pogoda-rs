@@ -3,21 +3,18 @@
 
 use crate::text::{self, PrecipKind};
 
-/// Bearing (degrees) -> 16-point compass point (N, NNE, NE, …), rounded to the
-/// nearest 22.5°. Empty/non-numeric input -> "". Negative bearings wrap into range.
+/// Bearing (degrees) -> the Polish "wind from …" phrase in the genitive ("z zachodu",
+/// "ze wschodu", …) on the 8-point compass, rounded to the nearest 45°. Empty/
+/// non-numeric input -> "". Negative bearings wrap into range.
 pub fn cardinal(deg: &str) -> String {
     let d: f64 = match deg.trim().parse() {
         Ok(v) => v,
         Err(_) => return String::new(),
     };
-    const C: [&str; 16] = [
-        "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW",
-        "NW", "NNW",
-    ];
     // `as i64` truncates toward zero; the modulo below folds negatives into range.
-    let idx = (d / 22.5 + 0.5) as i64;
-    let idx = ((idx % 16) + 16) % 16;
-    C[idx as usize].to_string()
+    let idx = (d / 45.0 + 0.5) as i64;
+    let idx = ((idx % 8) + 8) % 8;
+    text::WIND_FROM[idx as usize].to_string()
 }
 
 /// Human-readable sky condition from an Icon10 code (n<cloud><precip><d|n>), refined
@@ -82,20 +79,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cardinal_points() {
-        assert_eq!(cardinal("0"), "N");
-        assert_eq!(cardinal("45"), "NE");
-        assert_eq!(cardinal("90"), "E");
-        assert_eq!(cardinal("180"), "S");
-        assert_eq!(cardinal("270"), "W");
+    fn cardinal_all_eight_points() {
+        assert_eq!(cardinal("0"), "z północy");
+        assert_eq!(cardinal("45"), "z północnego wschodu");
+        assert_eq!(cardinal("90"), "ze wschodu");
+        assert_eq!(cardinal("135"), "z południowego wschodu");
+        assert_eq!(cardinal("180"), "z południa");
+        assert_eq!(cardinal("225"), "z południowego zachodu");
+        assert_eq!(cardinal("270"), "z zachodu");
+        assert_eq!(cardinal("315"), "z północnego zachodu");
     }
 
     #[test]
     fn cardinal_rounding_and_wrap() {
-        assert_eq!(cardinal("350"), "N");
-        assert_eq!(cardinal("360"), "N");
-        assert_eq!(cardinal("22.5"), "NNE");
-        assert_eq!(cardinal("-10"), "N");
+        assert_eq!(cardinal("350"), "z północy"); // rounds to N
+        assert_eq!(cardinal("360"), "z północy"); // wraps to N
+        assert_eq!(cardinal("22.5"), "z północnego wschodu"); // boundary rounds up to NE
+        assert_eq!(cardinal("-10"), "z północy"); // negative wraps into range
     }
 
     #[test]

@@ -61,8 +61,32 @@ pub fn precip_none(hours: i64) -> String {
     format!("   Opady: brak (sucho przez najbliższe {hours}h)")
 }
 
-pub fn wind_line(speed: &str, card: &str, dir: &str, gust: Option<&str>) -> String {
-    let mut s = format!("   Wiatr: {speed} m/s {card} ({dir}°)");
+/// Wind-direction phrases in the genitive, ready to follow "Wiatr " (→ "Wiatr z
+/// zachodu"). Indexed by the 8-point compass: N, NE, E, SE, S, SW, W, NW. "ze wschodu"
+/// takes the euphonic "ze".
+pub const WIND_FROM: [&str; 8] = [
+    "z północy",
+    "z północnego wschodu",
+    "ze wschodu",
+    "z południowego wschodu",
+    "z południa",
+    "z południowego zachodu",
+    "z zachodu",
+    "z północnego zachodu",
+];
+
+/// Wind line: "Wiatr <z kierunku>: <speed> m/s (<deg>°)[, w porywach <gust> m/s]".
+/// `dir_phrase` is a `WIND_FROM` entry (empty if the bearing is unknown); `deg` is the
+/// raw bearing (empty to omit).
+pub fn wind_line(speed: &str, dir_phrase: &str, deg: &str, gust: Option<&str>) -> String {
+    let mut s = String::from("   Wiatr");
+    if !dir_phrase.is_empty() {
+        s.push_str(&format!(" {dir_phrase}"));
+    }
+    s.push_str(&format!(": {speed} m/s"));
+    if !deg.is_empty() {
+        s.push_str(&format!(" ({deg}°)"));
+    }
     if let Some(g) = gust {
         s.push_str(&format!(", w porywach {g} m/s"));
     }

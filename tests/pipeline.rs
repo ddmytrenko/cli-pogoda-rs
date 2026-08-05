@@ -150,7 +150,7 @@ fn happy_path_renders_forecast_and_both_warning_boxes() {
     assert!(text.contains("Pogoda: Krakow"), "{text}");
     assert!(text.contains("słonecznie"), "{text}");
     assert!(
-        text.contains("Wiatr: 3.0 m/s E (90°), w porywach 6.0 m/s"),
+        text.contains("Wiatr ze wschodu: 3.0 m/s (90°), w porywach 6.0 m/s"),
         "{text}"
     );
     assert!(
