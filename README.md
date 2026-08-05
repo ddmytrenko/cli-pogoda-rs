@@ -6,7 +6,7 @@ plus any active meteorological and hydrological (drought) warnings there. The UI
 is **Polish** (IMGW is a Poland-only service).
 
 ```
-❯ pogoda -p "Warszawa,PL"
+❯ pogoda "Warszawa,PL"
 ┌─ OSTRZEŻENIE! (stopień 3, 90%) ─────────────────────────────────────────┐
 │ Upał — od 2026-08-03 20:00 do jutra 20:00                               │
 │ Prognozuje się upały. Temperatura maksymalna w dzień od 33°C do 38°C.   │
