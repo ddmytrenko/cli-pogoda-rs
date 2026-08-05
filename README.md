@@ -50,13 +50,12 @@ cargo build --release   # binary at target/release/pogoda
 ## Usage
 
 ```
-pogoda [-p|--place "City,CC"|"lat,lon"] [location]
+pogoda ["City,CC" | "lat,lon"]
 ```
 
 - `pogoda` — forecast for `weather_place` from the config file.
 - `pogoda Kraków` / `pogoda "Warszawa,PL"` — forecast for a named place.
 - `pogoda "50.06,19.94"` — forecast for coordinates.
-- `pogoda -p "Gdańsk"` — the `-p/--place` flag wins over a positional argument.
 
 Colour output disables itself when stdout is not a terminal or `NO_COLOR` is set.
 

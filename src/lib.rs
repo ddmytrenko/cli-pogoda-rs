@@ -38,10 +38,9 @@ pub fn run() -> i32 {
         return 0;
     }
 
-    // -p/--place wins, else a bare positional, else the configured default.
+    // The positional location, else the configured default.
     let place = args
-        .place
-        .or(args.positional)
+        .positional
         .or_else(|| cfg.get("weather_place").map(String::from));
     let place = match place {
         Some(p) if !p.trim().is_empty() => p,
@@ -337,26 +336,19 @@ fn print_help(cfg: &Config) {
     }
 }
 
-/// Parsed command line: `-p/--place VALUE`, `-h/--help`, and a bare positional.
+/// Parsed command line: a bare positional location, and `-h/--help`.
 struct Args {
-    place: Option<String>,
     positional: Option<String>,
     help: bool,
 }
 
 impl Args {
-    fn parse<I: Iterator<Item = String>>(mut it: I) -> Result<Args, String> {
-        let mut place = None;
+    fn parse<I: Iterator<Item = String>>(it: I) -> Result<Args, String> {
         let mut positional = None;
         let mut help = false;
-        while let Some(a) = it.next() {
+        for a in it {
             match a.as_str() {
                 "-h" | "--help" => help = true,
-                "-p" | "--place" => {
-                    place = Some(it.next().ok_or(text::ERR_PLACE_NEEDS_VALUE)?);
-                }
-                s if s.starts_with("--place=") => place = Some(s["--place=".len()..].to_string()),
-                s if s.starts_with("-p=") => place = Some(s["-p=".len()..].to_string()),
                 s if s.starts_with('-') && s != "-" => {
                     return Err(text::err_unknown_option(s));
                 }
@@ -367,11 +359,7 @@ impl Args {
                 }
             }
         }
-        Ok(Args {
-            place,
-            positional,
-            help,
-        })
+        Ok(Args { positional, help })
     }
 }
 
@@ -384,31 +372,19 @@ mod tests {
     }
 
     #[test]
-    fn place_flag_forms() {
-        assert_eq!(
-            parse(&["-p", "Warsaw,PL"]).place.as_deref(),
-            Some("Warsaw,PL")
-        );
-        assert_eq!(
-            parse(&["--place", "Krakow"]).place.as_deref(),
-            Some("Krakow")
-        );
-        assert_eq!(parse(&["--place=Gdansk"]).place.as_deref(), Some("Gdansk"));
-    }
-
-    #[test]
     fn positional_and_help() {
         assert_eq!(
             parse(&["52.24,21.03"]).positional.as_deref(),
             Some("52.24,21.03")
         );
+        assert_eq!(parse(&["Warszawa,PL"]).positional.as_deref(), Some("Warszawa,PL"));
         assert!(parse(&["-h"]).help);
         assert!(parse(&["--help"]).help);
     }
 
     #[test]
-    fn missing_place_value_is_an_error() {
-        assert!(Args::parse(["-p".to_string()].into_iter()).is_err());
+    fn first_positional_wins() {
+        assert_eq!(parse(&["Kraków", "Gdańsk"]).positional.as_deref(), Some("Kraków"));
     }
 
     #[test]

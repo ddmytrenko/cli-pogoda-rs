@@ -140,9 +140,8 @@ pub fn no_forecast_data(label: &str, lat: f64, lon: f64) -> String {
 
 pub const ERR_NO_LOCATION: &str =
     "Błąd: nie podano lokalizacji, a `weather_place` nie jest ustawione";
-pub const USAGE: &str = "Użycie: pogoda [-p|--place \"Miasto,KK\"|\"szer,dług\"] [lokalizacja]";
-pub const EXAMPLE: &str = "Przykład: pogoda -p \"Warszawa,PL\"";
-pub const ERR_PLACE_NEEDS_VALUE: &str = "Błąd: -p/--place wymaga wartości";
+pub const USAGE: &str = "Użycie: pogoda [\"Miasto,KK\" | \"szer,dług\"]";
+pub const EXAMPLE: &str = "Przykład: pogoda \"Warszawa,PL\"";
 
 pub fn err_unknown_option(opt: &str) -> String {
     format!("Błąd: nieznana opcja `{opt}`")
@@ -153,7 +152,7 @@ pub const UNSET: &str = "nie ustawione";
 
 pub const HELP_DESC: &str =
     "  Prognoza punktowa IMGW dla lokalizacji, wraz z aktywnymi ostrzeżeniami.";
-pub const HELP_EXAMPLES: &str = "  Przykłady: pogoda -p \"Warszawa,PL\"   |   pogoda \"52.24,21.03\"";
+pub const HELP_EXAMPLES: &str = "  Przykłady: pogoda \"Warszawa,PL\"   |   pogoda \"52.24,21.03\"";
 
 pub fn help_default(current: &str) -> String {
     format!("  Bez argumentu używa `weather_place` z pliku konfiguracyjnego (obecnie: {current}).")
