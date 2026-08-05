@@ -92,3 +92,22 @@ Tests come in two layers:
 
 Endpoints are injectable (`Client::with(Endpoints { .. }, ..)`), which is how the
 integration tests point every call at the mock server.
+
+## Data source
+
+Weather and warning data comes from **IMGW-PIB** — the Institute of Meteorology and
+Water Management – National Research Institute (*Instytut Meteorologii i Gospodarki
+Wodnej – Państwowy Instytut Badawczy*), Poland's state meteorological service:
+
+- Forecast — the HYBRID point nowcast at [meteo.imgw.pl](https://meteo.imgw.pl/).
+- Warnings — the public-data feeds at
+  [danepubliczne.imgw.pl](https://danepubliczne.imgw.pl/).
+
+Every forecast prints the attribution line `Dane pochodzą z https://meteo.imgw.pl/`
+("Data comes from …"), as IMGW's public data should be credited to its source.
+
+Geocoding (turning a place name or coordinates into lat/lon and a display name) uses
+[Open-Meteo](https://open-meteo.com/) and [BigDataCloud](https://www.bigdatacloud.com/);
+these are not IMGW.
+
+This is an **unofficial** client and is not affiliated with or endorsed by IMGW-PIB.
