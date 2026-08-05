@@ -1,24 +1,28 @@
-# imgw
+# pogoda
 
 A terminal point-weather nowcast from **IMGW-PIB**, the Polish meteorological
 service. Give it a place; it prints the current conditions for that exact point,
-plus any active meteorological and hydrological (drought) warnings there.
+plus any active meteorological and hydrological (drought) warnings there. The UI
+is **Polish** (IMGW is a Poland-only service).
 
 ```
-❯ imgw
-┌─ WARNING! ────────────────────────────────┐
-│ Upał — level 3, until 2026-08-01 20:00:00 │
-└───────────────────────────────────────────┘
-┌─ NOTICE ──────────────────────────────────────────────────┐
-│ Susza hydrologiczna (hydrological drought) — Rudawa basin │
-└───────────────────────────────────────────────────────────┘
- Weather in Krzeszowice: 32.7 °C, sunny  (IMGW HYBRID, feels 32.6 °C)
-   Precipitation: none (dry next 61h)
-   Wind: 4.3 m/s SW (230°), gust 8.1 m/s
-   Pressure: 1015 hPa
-   Humidity: 32%
-   Cloud: 0%
-   Sunrise: 05:08   Sunset: 20:27   (day 15h 19m)
+❯ pogoda -p "Warszawa,PL"
+┌─ OSTRZEŻENIE! (stopień 3, 90%) ─────────────────────────────────────────┐
+│ Upał — od 2026-08-03 20:00 do jutra 20:00                               │
+│ Prognozuje się upały. Temperatura maksymalna w dzień od 33°C do 38°C.   │
+└─────────────────────────────────────────────────────────────────────────┘
+┌─ UWAGA ────────────────────────────────────────────────────────┐
+│ Susza hydrologiczna — zlewnia Wisła od Dęblina do ujścia Narwi │
+└────────────────────────────────────────────────────────────────┘
+ Pogoda: Warszawa — 29.1 °C, słonecznie  (IMGW HYBRID, odczuwalna 30.7 °C)
+   Opady: brak (sucho przez najbliższe 63h)
+   Wiatr: 1.8 m/s SSE (152°), w porywach 7.4 m/s
+   Ciśnienie: 1013 hPa
+   Wilgotność: 57%
+   Zachmurzenie: 0%
+   Wschód: 05:02   Zachód: 20:21   (dzień 15h 19m)
+
+Dane pochodzą z https://meteo.imgw.pl/
 ```
 
 ## How it works
@@ -40,19 +44,19 @@ Warnings are filtered to the point, not the country:
 ```sh
 cargo install --path .
 # or
-cargo build --release   # binary at target/release/imgw
+cargo build --release   # binary at target/release/pogoda
 ```
 
 ## Usage
 
 ```
-imgw [-p|--place "City,CC"|"lat,lon"] [location]
+pogoda [-p|--place "City,CC"|"lat,lon"] [location]
 ```
 
-- `imgw` — forecast for `weather_place` from the config file.
-- `imgw Krakow` / `imgw "Warsaw,PL"` — forecast for a named place.
-- `imgw "50.06,19.94"` — forecast for coordinates.
-- `imgw -p "Gdansk"` — the `-p/--place` flag wins over a positional argument.
+- `pogoda` — forecast for `weather_place` from the config file.
+- `pogoda Kraków` / `pogoda "Warszawa,PL"` — forecast for a named place.
+- `pogoda "50.06,19.94"` — forecast for coordinates.
+- `pogoda -p "Gdańsk"` — the `-p/--place` flag wins over a positional argument.
 
 Colour output disables itself when stdout is not a terminal or `NO_COLOR` is set.
 

@@ -120,6 +120,9 @@ pub const TOMORROW: &str = "jutra";
 
 // --- errors & help ---
 
+/// Program name, used as the stderr error prefix.
+pub const PROGRAM: &str = "pogoda";
+
 pub const GEOCODE_FAILED: &str = "błąd zapytania geokodowania";
 
 pub fn not_geocoded(town: &str, country: Option<&str>) -> String {
@@ -137,8 +140,8 @@ pub fn no_forecast_data(label: &str, lat: f64, lon: f64) -> String {
 
 pub const ERR_NO_LOCATION: &str =
     "Błąd: nie podano lokalizacji, a `weather_place` nie jest ustawione";
-pub const USAGE: &str = "Użycie: imgw [-p|--place \"Miasto,KK\"|\"szer,dług\"] [lokalizacja]";
-pub const EXAMPLE: &str = "Przykład: imgw -p \"Warszawa,PL\"";
+pub const USAGE: &str = "Użycie: pogoda [-p|--place \"Miasto,KK\"|\"szer,dług\"] [lokalizacja]";
+pub const EXAMPLE: &str = "Przykład: pogoda -p \"Warszawa,PL\"";
 pub const ERR_PLACE_NEEDS_VALUE: &str = "Błąd: -p/--place wymaga wartości";
 
 pub fn err_unknown_option(opt: &str) -> String {
@@ -150,7 +153,7 @@ pub const UNSET: &str = "nie ustawione";
 
 pub const HELP_DESC: &str =
     "  Prognoza punktowa IMGW dla lokalizacji, wraz z aktywnymi ostrzeżeniami.";
-pub const HELP_EXAMPLES: &str = "  Przykłady: imgw -p \"Warszawa,PL\"   |   imgw \"52.24,21.03\"";
+pub const HELP_EXAMPLES: &str = "  Przykłady: pogoda -p \"Warszawa,PL\"   |   pogoda \"52.24,21.03\"";
 
 pub fn help_default(current: &str) -> String {
     format!("  Bez argumentu używa `weather_place` z pliku konfiguracyjnego (obecnie: {current}).")

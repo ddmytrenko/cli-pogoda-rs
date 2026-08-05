@@ -6,7 +6,7 @@ description = "IMGW-PIB point weather nowcast for the terminal"
 license = "MIT"
 
 [[bin]]
-name = "imgw"
+name = "pogoda"
 path = "src/main.rs"
 
 [dependencies]

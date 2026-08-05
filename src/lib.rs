@@ -1,7 +1,7 @@
-//! `imgw` — a terminal point-weather nowcast from IMGW-PIB, the Polish
+//! `pogoda` — a terminal point-weather nowcast from IMGW-PIB, the Polish
 //! meteorological service. Resolves a location to coordinates, fetches the HYBRID
-//! point forecast, and prints it with any active meteorological and hydrological
-//! (drought) warnings for that exact point.
+//! point forecast, and prints it (in Polish) with any active meteorological and
+//! hydrological (drought) warnings for that exact point.
 
 pub mod client;
 pub mod config;
@@ -98,7 +98,7 @@ pub fn run_place(
     let loc = match loc_res {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("imgw: {e}");
+            eprintln!("{}: {e}", text::PROGRAM);
             return 1;
         }
     };
@@ -126,7 +126,7 @@ pub fn run_place(
     let body = match body {
         Some(b) => b,
         None => {
-            eprintln!("imgw: {}", text::FORECAST_FAILED);
+            eprintln!("{}: {}", text::PROGRAM, text::FORECAST_FAILED);
             return 1;
         }
     };
@@ -135,7 +135,8 @@ pub fn run_place(
         Ok(f) => f,
         Err(_) => {
             eprintln!(
-                "imgw: {}",
+                "{}: {}",
+                text::PROGRAM,
                 text::no_forecast_data(&loc.label, loc.lat, loc.lon)
             );
             return 1;
