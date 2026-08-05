@@ -1,4 +1,4 @@
-//! Flat `key = value` INI config, read from `$XDG_CONFIG_HOME/imgw-rs/config.ini`
+//! Flat `key = value` INI config, read from `$XDG_CONFIG_HOME/pogoda-rs/config.ini`
 //! (falling back to `~/.config/...`). Comments (`#`/`;`), blank lines and `[section]`
 //! headers are ignored; values keep their case, keys are lowercased. The only key the
 //! app reads today is `weather_place`, but any key is retained so the file can grow
@@ -6,6 +6,9 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+/// Per-app subdirectory under the XDG config/cache bases (e.g. `~/.config/<APP_DIR>`).
+const APP_DIR: &str = "pogoda-rs";
 
 pub struct Config {
     map: HashMap<String, String>,
@@ -54,18 +57,18 @@ impl Config {
         self.map.get(key).map(|s| s.as_str())
     }
 
-    /// `$XDG_CONFIG_HOME/imgw-rs/config.ini`, else `~/.config/imgw-rs/config.ini`.
+    /// `$XDG_CONFIG_HOME/pogoda-rs/config.ini`, else `~/.config/pogoda-rs/config.ini`.
     pub fn path() -> Option<PathBuf> {
         Some(config_dir()?.join("config.ini"))
     }
 }
 
-/// The app's config dir: `$XDG_CONFIG_HOME/imgw-rs` or `~/.config/imgw-rs`.
+/// The app's config dir: `$XDG_CONFIG_HOME/pogoda-rs` or `~/.config/pogoda-rs`.
 pub fn config_dir() -> Option<PathBuf> {
     xdg_dir("XDG_CONFIG_HOME", ".config")
 }
 
-/// The app's cache dir: `$XDG_CACHE_HOME/imgw-rs` or `~/.cache/imgw-rs`.
+/// The app's cache dir: `$XDG_CACHE_HOME/pogoda-rs` or `~/.cache/pogoda-rs`.
 pub fn cache_dir() -> Option<PathBuf> {
     xdg_dir("XDG_CACHE_HOME", ".cache")
 }
@@ -75,7 +78,7 @@ fn xdg_dir(env: &str, fallback: &str) -> Option<PathBuf> {
         Some(v) if !v.is_empty() => PathBuf::from(v),
         _ => PathBuf::from(std::env::var_os("HOME")?).join(fallback),
     };
-    Some(base.join("imgw-rs"))
+    Some(base.join(APP_DIR))
 }
 
 #[cfg(test)]

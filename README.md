@@ -61,15 +61,15 @@ Colour output disables itself when stdout is not a terminal or `NO_COLOR` is set
 
 ## Configuration
 
-Config lives at `$XDG_CONFIG_HOME/imgw-rs/config.ini` (usually
-`~/.config/imgw-rs/config.ini`). See [`config.example.ini`](config.example.ini).
+Config lives at `$XDG_CONFIG_HOME/pogoda-rs/config.ini` (usually
+`~/.config/pogoda-rs/config.ini`). See [`config.example.ini`](config.example.ini).
 
 | Key             | Meaning                                            |
 | --------------- | -------------------------------------------------- |
 | `weather_place` | Default location (`City,CC` or `lat,lon`) when run with no argument. |
 
 Cached data (API token, basin polygons) lives under
-`$XDG_CACHE_HOME/imgw-rs/`.
+`$XDG_CACHE_HOME/pogoda-rs/`.
 
 ## Development
 
