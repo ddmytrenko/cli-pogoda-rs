@@ -199,6 +199,8 @@ pub struct GeocodeResult {
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
     pub timezone: String,
+    #[serde(rename = "country_code")]
+    pub country_code: String, // ISO-3166 alpha-2, e.g. "PL"
 }
 
 /// BigDataCloud reverse-geocoding response (coordinate → display name).
