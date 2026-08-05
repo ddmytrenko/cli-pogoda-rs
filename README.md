@@ -71,6 +71,17 @@ Config lives at `$XDG_CONFIG_HOME/pogoda-rs/config.ini` (usually
 Cached data (API token, basin polygons) lives under
 `$XDG_CACHE_HOME/pogoda-rs/`.
 
+### Migrating from the old `imgw-rs` directory
+
+Earlier versions used `imgw-rs` instead of `pogoda-rs`. If you have a config there,
+move it once:
+
+```sh
+mkdir -p ~/.config/pogoda-rs
+mv ~/.config/imgw-rs/config.ini ~/.config/pogoda-rs/ 2>/dev/null
+rm -rf ~/.cache/imgw-rs   # cache is disposable; it re-fetches
+```
+
 ## Development
 
 ```sh
