@@ -53,16 +53,18 @@ pub fn banner(place: &str, temp: f64, cond_suffix: &str, feels: f64) -> String {
     format!(" Pogoda: {place} — {temp:.1} °C{cond_suffix}  (IMGW HYBRID, odczuwalna {feels:.1} °C)")
 }
 
-/// Precip already falling / imminent: "<kind>: <amount> mm przez najbliższe <hours>h".
+/// Precip already falling / imminent: "<kind>: <amount> mm w ciągu najbliższych <hours>h".
+/// An amount takes "w ciągu" (accumulated within the window), not "przez" (throughout).
 pub fn precip_soon(kind: &str, amount: f64, hours: i64) -> String {
-    format!("   {kind}: {amount:.1} mm przez najbliższe {hours}h")
+    format!("   {kind}: {amount:.1} mm w ciągu najbliższych {hours}h")
 }
 
 /// Dry now, precip later: "<kind>: sucho przez najbliższe <dry>h, potem <amount> mm
-/// przez kolejne <rest>h".
+/// w ciągu kolejnych <rest>h". Note the deliberate mix: the dry *state* holds "przez"
+/// the period, the rain *amount* falls "w ciągu" (within) it.
 pub fn precip_after_dry(kind: &str, dry_hours: i64, amount: f64, rest_hours: i64) -> String {
     format!(
-        "   {kind}: sucho przez najbliższe {dry_hours}h, potem {amount:.1} mm przez kolejne {rest_hours}h"
+        "   {kind}: sucho przez najbliższe {dry_hours}h, potem {amount:.1} mm w ciągu kolejnych {rest_hours}h"
     )
 }
 
