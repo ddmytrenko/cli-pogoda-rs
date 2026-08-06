@@ -141,7 +141,7 @@ pub fn warning_headline(event: &str, from: &str, until: &str) -> String {
 }
 
 /// Caption for the (quiet) drought notice box.
-pub const NOTICE_CAPTION: &str = "UWAGA";
+pub const NOTICE_CAPTION: &str = "UWAGA!";
 
 /// Drought notice body for a river basin.
 pub fn drought_notice(basin: &str) -> String {
