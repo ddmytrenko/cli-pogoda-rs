@@ -53,12 +53,19 @@ impl Colors {
 }
 
 /// Draw a rectangle around `body`, with `caption` set into the top edge. Bars are in
-/// `col`, content left default (reset after each bar). Auto-sizes to the widest line
-/// (counted in chars) and returns the box as lines.
-pub fn warn_box(col: &str, rst: &str, caption: &str, body: &[String]) -> Vec<String> {
+/// `col`, content left default (reset after each bar). Renders at `min_width` inner
+/// columns so several boxes can share one width, but still grows to fit the caption or
+/// any body line (never truncates). Widths are counted in chars. Returns the box lines.
+pub fn warn_box(
+    col: &str,
+    rst: &str,
+    caption: &str,
+    body: &[String],
+    min_width: usize,
+) -> Vec<String> {
     let title = format!("─ {caption} ");
     let title_len = title.chars().count();
-    let mut w = 16usize;
+    let mut w = min_width.max(16).max(title_len);
     for l in body {
         let ln = l.chars().count() + 2;
         if ln > w {
@@ -120,20 +127,20 @@ mod tests {
 
     #[test]
     fn draws_four_lines_for_two_line_body() {
-        let lines = warn_box("", "", "NOTICE", &body());
+        let lines = warn_box("", "", "NOTICE", &body(), 0);
         assert_eq!(lines.len(), 4);
     }
 
     #[test]
     fn caption_set_into_top_edge() {
-        let lines = warn_box("", "", "NOTICE", &body());
+        let lines = warn_box("", "", "NOTICE", &body(), 0);
         assert!(lines[0].starts_with("┌─ NOTICE "));
         assert!(lines[0].ends_with('┐'));
     }
 
     #[test]
     fn body_lines_enclosed_and_preserved() {
-        let lines = warn_box("", "", "NOTICE", &body());
+        let lines = warn_box("", "", "NOTICE", &body(), 0);
         assert!(lines[1].starts_with("│ hello"));
         assert!(lines[2].contains("a longer line here"));
         assert!(lines[3].starts_with('└') && lines[3].ends_with('┘'));
@@ -141,10 +148,19 @@ mod tests {
 
     #[test]
     fn all_rows_share_one_char_width() {
-        let lines = warn_box("", "", "NOTICE", &body());
+        let lines = warn_box("", "", "NOTICE", &body(), 0);
         let w = lines[0].chars().count();
         for l in &lines {
             assert_eq!(l.chars().count(), w);
+        }
+    }
+
+    #[test]
+    fn min_width_forces_a_uniform_wider_box() {
+        // content is short, but min_width 60 makes every row 60 inner + 2 border = 62.
+        let lines = warn_box("", "", "NOTICE", &body(), 60);
+        for l in &lines {
+            assert_eq!(l.chars().count(), 62);
         }
     }
 

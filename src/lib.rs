@@ -143,10 +143,13 @@ pub fn run_place(
     };
 
     // Render (sequential, ordered) from the already-fetched data: warning boxes above
-    // the forecast, then the forecast itself.
+    // the forecast, then the forecast itself. The banner line sets the shared box width
+    // so every warning box aligns to it.
     let today = chrono::Utc::now()
         .with_timezone(&chrono_tz::Europe::Warsaw)
         .date_naive();
+    let banner = forecast_banner(&fc, &loc);
+    let box_width = banner.chars().count();
     render_warnings(
         colors,
         today,
@@ -155,9 +158,10 @@ pub fn run_place(
         meteo_raw.as_deref(),
         hydro_raw.as_deref(),
         basins.as_deref(),
+        box_width,
         out,
     );
-    print_forecast(&fc, &loc, out);
+    print_forecast(&fc, &loc, &banner, out);
 
     // Source attribution, under every forecast.
     let _ = writeln!(out, "\n{}", text::SOURCE);
@@ -183,18 +187,39 @@ fn fetch_forecast_and_area(
     })
 }
 
-/// Max characters per line when wrapping a warning's description.
-const DESC_WRAP_WIDTH: usize = 72;
+/// The forecast banner line (" Pogoda: … °C …"). Its width is reused as the shared
+/// width for the warning boxes so everything lines up.
+fn forecast_banner(fc: &forecast::Forecast, loc: &geo::Location) -> String {
+    let cond = weather::condition(&fc.icon, fc.rain, fc.snow, fc.prec);
+    let cond_suffix = if cond.is_empty() {
+        String::new()
+    } else {
+        format!(", {cond}")
+    };
+    text::banner(&loc.label, fc.temp, &cond_suffix, fc.feels)
+}
 
 /// Render one warning as a coloured box: level + probability in the caption, the
-/// event/window headline first, then the wrapped description (if any).
-fn emit_warning_box(w: &warnings::Warning, colors: &Colors, out: &mut impl Write) {
+/// event/window headline first, then the wrapped description (if any). `inner_width` is
+/// the shared box interior width; the description wraps to fit inside it.
+fn emit_warning_box(
+    w: &warnings::Warning,
+    colors: &Colors,
+    inner_width: usize,
+    out: &mut impl Write,
+) {
     let caption = text::warning_caption(w.level, &w.prob);
     let mut body = vec![w.headline.clone()];
     if !w.desc.is_empty() {
-        body.extend(ui::wrap(&w.desc, DESC_WRAP_WIDTH));
+        body.extend(ui::wrap(&w.desc, inner_width.saturating_sub(2)));
     }
-    for l in ui::warn_box(colors.level(w.level), &colors.reset, &caption, &body) {
+    for l in ui::warn_box(
+        colors.level(w.level),
+        &colors.reset,
+        &caption,
+        &body,
+        inner_width,
+    ) {
         let _ = writeln!(out, "{l}");
     }
 }
@@ -212,15 +237,20 @@ fn render_warnings(
     meteo_raw: Option<&str>,
     hydro_raw: Option<&str>,
     basins: Option<&Path>,
+    box_width: usize,
     out: &mut impl Write,
 ) {
+    // Shared box interior width: box total = inner + 2 borders, so inner = box_width - 2
+    // makes every box exactly as wide as the forecast banner.
+    let inner = box_width.saturating_sub(2);
+
     // Meteo warnings, filtered to this point's administrative area: one box per
     // warning, coloured by level (3=red, 2=orange, 1=yellow), highest severity first.
     if let (Some(area), Some(raw)) = (area, meteo_raw) {
         if let Ok(items) = serde_json::from_str::<Vec<model::MeteoWarning>>(raw) {
             let ws = warnings::ordered_for_display(warnings::meteo_warnings(&items, area, today));
             for w in &ws {
-                emit_warning_box(w, colors, out);
+                emit_warning_box(w, colors, inner, out);
             }
         }
     }
@@ -237,13 +267,17 @@ fn render_warnings(
                     today,
                 ));
                 for w in &ws {
-                    emit_warning_box(w, colors, out);
+                    emit_warning_box(w, colors, inner, out);
                 }
                 if warnings::drought_hits_basin(&items, &basin.code) {
                     let line = text::drought_notice(&basin.name);
-                    for l in
-                        ui::warn_box(&colors.grey, &colors.reset, text::NOTICE_CAPTION, &[line])
-                    {
+                    for l in ui::warn_box(
+                        &colors.grey,
+                        &colors.reset,
+                        text::NOTICE_CAPTION,
+                        &[line],
+                        inner,
+                    ) {
                         let _ = writeln!(out, "{l}");
                     }
                 }
@@ -252,19 +286,15 @@ fn render_warnings(
     }
 }
 
-/// Write the forecast block: banner, precip, wind, pressure, humidity, cloud, sun.
-fn print_forecast(fc: &forecast::Forecast, loc: &geo::Location, out: &mut impl Write) {
-    let cond = weather::condition(&fc.icon, fc.rain, fc.snow, fc.prec);
-    let cond_suffix = if cond.is_empty() {
-        String::new()
-    } else {
-        format!(", {cond}")
-    };
-    let _ = writeln!(
-        out,
-        "{}",
-        text::banner(&loc.label, fc.temp, &cond_suffix, fc.feels)
-    );
+/// Write the forecast block: `banner` (prebuilt), then precip, wind, pressure,
+/// humidity, cloud, sun.
+fn print_forecast(
+    fc: &forecast::Forecast,
+    loc: &geo::Location,
+    banner: &str,
+    out: &mut impl Write,
+) {
+    let _ = writeln!(out, "{banner}");
 
     let h = fc.hrs.round() as i64;
     if fc.prec_sum > 0.0 {
