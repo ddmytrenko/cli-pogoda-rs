@@ -267,7 +267,7 @@ fn print_forecast(fc: &forecast::Forecast, loc: &geo::Location, out: &mut impl W
     );
 
     let h = fc.hrs.round() as i64;
-    if fc.prec > 0.0 || fc.prec_sum > 0.0 {
+    if fc.prec_sum > 0.0 {
         let kind = if fc.rain_sum > 0.0 && fc.snow_sum > 0.0 {
             text::PRECIP_RAIN_AND_SNOW
         } else if fc.snow_sum > 0.0 {
@@ -277,7 +277,15 @@ fn print_forecast(fc: &forecast::Forecast, loc: &geo::Location, out: &mut impl W
         } else {
             text::PRECIP_MIXED
         };
-        let _ = writeln!(out, "{}", text::precip_line(kind, fc.prec, fc.prec_sum, h));
+        // Dry-then-wet: say how long it stays dry, then the amount over the rest.
+        // Otherwise (already/soon raining) just the amount over the window.
+        let onset = fc.onset_hours.unwrap_or(0.0).round() as i64;
+        let line = if onset >= 1 {
+            text::precip_after_dry(kind, onset, fc.prec_sum, (h - onset).max(0))
+        } else {
+            text::precip_soon(kind, fc.prec_sum, h)
+        };
+        let _ = writeln!(out, "{line}");
     } else {
         let _ = writeln!(out, "{}", text::precip_none(h));
     }

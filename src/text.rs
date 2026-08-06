@@ -53,10 +53,20 @@ pub fn banner(place: &str, temp: f64, cond_suffix: &str, feels: f64) -> String {
     format!(" Pogoda: {place} — {temp:.1} °C{cond_suffix}  (IMGW HYBRID, odczuwalna {feels:.1} °C)")
 }
 
-pub fn precip_line(kind: &str, now: f64, sum: f64, hours: i64) -> String {
-    format!("   {kind}: {now:.1} mm teraz, {sum:.1} mm przez najbliższe {hours}h")
+/// Precip already falling / imminent: "<kind>: <amount> mm przez najbliższe <hours>h".
+pub fn precip_soon(kind: &str, amount: f64, hours: i64) -> String {
+    format!("   {kind}: {amount:.1} mm przez najbliższe {hours}h")
 }
 
+/// Dry now, precip later: "<kind>: sucho przez najbliższe <dry>h, potem <amount> mm
+/// przez kolejne <rest>h".
+pub fn precip_after_dry(kind: &str, dry_hours: i64, amount: f64, rest_hours: i64) -> String {
+    format!(
+        "   {kind}: sucho przez najbliższe {dry_hours}h, potem {amount:.1} mm przez kolejne {rest_hours}h"
+    )
+}
+
+/// No precipitation anywhere in the window.
 pub fn precip_none(hours: i64) -> String {
     format!("   Opady: brak (sucho przez najbliższe {hours}h)")
 }

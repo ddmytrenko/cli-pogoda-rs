@@ -26,7 +26,8 @@ pub struct Forecast {
     pub prec_sum: f64, // mm over the step window
     pub rain_sum: f64,
     pub snow_sum: f64,
-    pub hrs: f64, // span of the step window, hours
+    pub hrs: f64,                 // span of the step window, hours
+    pub onset_hours: Option<f64>, // hours from now until precip starts; None if dry all window
 }
 
 /// Parse a numeric string field ("295.0"), or 0.0 when empty/unparseable.
@@ -112,16 +113,31 @@ pub fn parse(json: &str) -> Result<Forecast> {
     let rain_sum: f64 = steps.iter().copied().map(step_rain).sum();
     let snow_sum: f64 = steps.iter().copied().map(step_snow).sum();
 
-    let hrs = match (steps.first(), steps.last()) {
-        (Some(a), Some(b)) => match (
-            chrono::DateTime::parse_from_rfc3339(&a.date),
-            chrono::DateTime::parse_from_rfc3339(&b.date),
-        ) {
-            (Ok(ta), Ok(tb)) => (tb.timestamp() - ta.timestamp()) as f64 / 3600.0,
-            _ => 0.0,
-        },
+    let start = steps
+        .first()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s.date).ok())
+        .map(|d| d.timestamp());
+    let hrs = match (
+        start,
+        steps
+            .last()
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s.date).ok())
+            .map(|d| d.timestamp()),
+    ) {
+        (Some(a), Some(b)) => (b - a) as f64 / 3600.0,
         _ => 0.0,
     };
+
+    // When does precipitation begin? Earliest step with any precip, in hours from now.
+    let onset_hours = start.and_then(|s0| {
+        steps
+            .iter()
+            .filter(|s| step_precip(s) > 0.0)
+            .filter_map(|s| chrono::DateTime::parse_from_rfc3339(&s.date).ok())
+            .map(|d| d.timestamp())
+            .min()
+            .map(|first| (first - s0) as f64 / 3600.0)
+    });
 
     Ok(Forecast {
         temp,
@@ -142,6 +158,7 @@ pub fn parse(json: &str) -> Result<Forecast> {
         rain_sum,
         snow_sum,
         hrs,
+        onset_hours,
     })
 }
 
@@ -211,8 +228,22 @@ mod tests {
           }
         }"#;
         let f = parse(json).unwrap();
-        assert!((f.prec_sum - 2.9).abs() < 1e-6, "prec_sum was {}", f.prec_sum);
-        assert!((f.rain_sum - 2.9).abs() < 1e-6, "rain_sum was {}", f.rain_sum);
+        assert!(
+            (f.prec_sum - 2.9).abs() < 1e-6,
+            "prec_sum was {}",
+            f.prec_sum
+        );
+        assert!(
+            (f.rain_sum - 2.9).abs() < 1e-6,
+            "rain_sum was {}",
+            f.rain_sum
+        );
+        // dry 10:00 today → rain 09:00 next day = 23h until onset
+        assert!(
+            (f.onset_hours.unwrap() - 23.0).abs() < 1e-6,
+            "onset was {:?}",
+            f.onset_hours
+        );
     }
 
     #[test]
