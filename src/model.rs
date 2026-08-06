@@ -118,12 +118,22 @@ pub struct ForecastStep {
     pub cloud: String,
     #[serde(rename = "Icon10")]
     pub icon: String,
+    // Precipitation comes under two field sets depending on the step cadence:
+    // Type_Ten_Minutes steps carry the *10m fields (and null the hourly ones);
+    // Type_Hour steps carry the un-suffixed fields (and null the *10m ones). Hence
+    // `Option<String>` — a JSON `null` deserializes to `None`. See `forecast.rs`.
     #[serde(rename = "Rain10m")]
-    pub rain: String, // mm
+    pub rain_10m: Option<String>, // mm, 10-minute steps
     #[serde(rename = "Snow10m")]
-    pub snow: String, // mm
+    pub snow_10m: Option<String>,
     #[serde(rename = "Precipitation10m")]
-    pub precipitation: String, // mm
+    pub precipitation_10m: Option<String>,
+    #[serde(rename = "Rain")]
+    pub rain_hourly: Option<String>, // mm, hourly steps
+    #[serde(rename = "Snow")]
+    pub snow_hourly: Option<String>,
+    #[serde(rename = "Precipitation")]
+    pub precipitation_hourly: Option<String>,
 }
 
 /// One entry of the `warningsmeteo` feed (a nationwide meteorological warning).

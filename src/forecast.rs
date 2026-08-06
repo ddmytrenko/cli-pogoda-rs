@@ -34,6 +34,41 @@ fn num(s: &str) -> f64 {
     s.trim().parse().unwrap_or(0.0)
 }
 
+/// Parse an optional numeric string field to mm; None/empty/unparseable → 0.0.
+fn opt_mm(v: &Option<String>) -> f64 {
+    v.as_deref()
+        .map(str::trim)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.0)
+}
+
+// Precipitation fields differ by cadence: hourly steps carry Rain/Snow/Precipitation
+// (the *10m fields are null there); 10-minute steps carry the *10m fields. Read the
+// pair matching the step's `kind` so hourly rain isn't silently missed.
+fn step_rain(s: &ForecastStep) -> f64 {
+    if s.kind == "Type_Hour" {
+        opt_mm(&s.rain_hourly)
+    } else {
+        opt_mm(&s.rain_10m)
+    }
+}
+
+fn step_snow(s: &ForecastStep) -> f64 {
+    if s.kind == "Type_Hour" {
+        opt_mm(&s.snow_hourly)
+    } else {
+        opt_mm(&s.snow_10m)
+    }
+}
+
+fn step_precip(s: &ForecastStep) -> f64 {
+    if s.kind == "Type_Hour" {
+        opt_mm(&s.precipitation_hourly)
+    } else {
+        opt_mm(&s.precipitation_10m)
+    }
+}
+
 pub fn parse(json: &str) -> Result<Forecast> {
     let resp: ForecastResponse =
         serde_json::from_str(json).map_err(|_| anyhow!("bad forecast JSON"))?;
@@ -73,9 +108,9 @@ pub fn parse(json: &str) -> Result<Forecast> {
     let feels = c.chill.trim().parse::<f64>().unwrap_or(temp + 273.15) - 273.15;
     let pres = num(&c.pressure_msl) / 100.0;
 
-    let prec_sum: f64 = steps.iter().map(|s| num(&s.precipitation)).sum();
-    let rain_sum: f64 = steps.iter().map(|s| num(&s.rain)).sum();
-    let snow_sum: f64 = steps.iter().map(|s| num(&s.snow)).sum();
+    let prec_sum: f64 = steps.iter().copied().map(step_precip).sum();
+    let rain_sum: f64 = steps.iter().copied().map(step_rain).sum();
+    let snow_sum: f64 = steps.iter().copied().map(step_snow).sum();
 
     let hrs = match (steps.first(), steps.last()) {
         (Some(a), Some(b)) => match (
@@ -98,9 +133,9 @@ pub fn parse(json: &str) -> Result<Forecast> {
         pres,
         cloud: c.cloud.clone(),
         icon: c.icon.clone(),
-        rain: num(&c.rain),
-        snow: num(&c.snow),
-        prec: num(&c.precipitation),
+        rain: step_rain(c),
+        snow: step_snow(c),
+        prec: step_precip(c),
         sunrise: d.sun.sunrise.clone(),
         sunset: d.sun.sunset.clone(),
         prec_sum,
@@ -114,8 +149,9 @@ pub fn parse(json: &str) -> Result<Forecast> {
 mod tests {
     use super::*;
 
-    // A minimal payload: one 10-min step (current) + two hourly steps, one of which
-    // overlaps the 10-min window and must be dropped from the precip aggregation.
+    // A minimal payload mirroring the real API: one 10-min step (current, precip in the
+    // *10m fields) + two hourly steps (precip in the un-suffixed fields, *10m null), one
+    // of which overlaps the 10-min window and must be dropped from the aggregation.
     const FIXTURE: &str = r#"{
       "data": {
         "Valid": true,
@@ -127,9 +163,11 @@ mod tests {
             "PressureMSL": "101900", "Cloud": "0", "Icon10": "n0z00d",
             "Rain10m": "0.5", "Snow10m": "0.0", "Precipitation10m": "0.5" },
           { "Type": "Type_Hour", "Date": "2026-07-31T10:00:00Z",
-            "Rain10m": "9.9", "Snow10m": "0.0", "Precipitation10m": "9.9" },
+            "Rain10m": null, "Snow10m": null, "Precipitation10m": null,
+            "Rain": "9.9", "Snow": "0.0", "Precipitation": "9.9" },
           { "Type": "Type_Hour", "Date": "2026-07-31T11:00:00Z",
-            "Rain10m": "1.0", "Snow10m": "0.0", "Precipitation10m": "1.0" }
+            "Rain10m": null, "Snow10m": null, "Precipitation10m": null,
+            "Rain": "1.0", "Snow": "0.0", "Precipitation": "1.0" }
         ]
       }
     }"#;
@@ -149,8 +187,32 @@ mod tests {
     fn precip_sum_drops_overlapping_hourly_step() {
         let f = parse(FIXTURE).unwrap();
         // 0.5 (ten) + 1.0 (hour beyond last ten) — the 9.9 overlapping hour is excluded.
+        // The hourly amounts come from the un-suffixed Rain/Precipitation fields.
         assert!((f.prec_sum - 1.5).abs() < 1e-6);
         assert!((f.rain_sum - 1.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn counts_hourly_precip_when_ten_minute_window_is_dry() {
+        // Regression: near-term 10-min steps are dry, but rain appears in a later hourly
+        // step (Rain/Precipitation, with *10m null). It must NOT read as "no precip".
+        let json = r#"{
+          "data": {
+            "Valid": true,
+            "Sun": { "Sunrise": "2026-08-06T03:00:00Z", "Sunset": "2026-08-06T18:00:00Z" },
+            "Data": [
+              { "Type": "Type_Ten_Minutes", "Date": "2026-08-06T10:00:00Z",
+                "Temperature": "300.0", "Chill": "300.0",
+                "Rain10m": "0.0", "Snow10m": "0.0", "Precipitation10m": "0.0" },
+              { "Type": "Type_Hour", "Date": "2026-08-07T09:00:00Z",
+                "Rain10m": null, "Snow10m": null, "Precipitation10m": null,
+                "Rain": "2.9", "Snow": "0.0", "Precipitation": "2.9" }
+            ]
+          }
+        }"#;
+        let f = parse(json).unwrap();
+        assert!((f.prec_sum - 2.9).abs() < 1e-6, "prec_sum was {}", f.prec_sum);
+        assert!((f.rain_sum - 2.9).abs() < 1e-6, "rain_sum was {}", f.rain_sum);
     }
 
     #[test]
