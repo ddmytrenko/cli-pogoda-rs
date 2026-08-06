@@ -121,8 +121,9 @@ pub fn sun_line(sunrise: &str, sunset: &str, hours: i64, mins: i64) -> String {
     format!("   Wschód: {sunrise}   Zachód: {sunset}   (dzień {hours}h {mins:02}m)")
 }
 
-/// Source-attribution trailer printed under every forecast.
-pub const SOURCE: &str = "Dane pochodzą z https://meteo.imgw.pl/";
+/// Source-attribution trailer printed under every forecast. Credits IMGW-PIB as the
+/// data source (the tool re-presents their public data; it is not their product).
+pub const SOURCE: &str = "Źródło danych: Instytut Meteorologii i Gospodarki Wodnej – PIB";
 
 // --- warnings ---
 

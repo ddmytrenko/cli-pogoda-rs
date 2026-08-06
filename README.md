@@ -22,7 +22,7 @@ is **Polish** (IMGW is a Poland-only service).
    Zachmurzenie: 0%
    Wschód: 05:02   Zachód: 20:21   (dzień 15h 19m)
 
-Dane pochodzą z https://meteo.imgw.pl/
+Źródło danych: Instytut Meteorologii i Gospodarki Wodnej – PIB
 ```
 
 ## How it works
@@ -103,8 +103,9 @@ Wodnej – Państwowy Instytut Badawczy*), Poland's state meteorological service
 - Warnings — the public-data feeds at
   [danepubliczne.imgw.pl](https://danepubliczne.imgw.pl/).
 
-Every forecast prints the attribution line `Dane pochodzą z https://meteo.imgw.pl/`
-("Data comes from …"), as IMGW's public data should be credited to its source.
+Every forecast prints the attribution line
+`Źródło danych: Instytut Meteorologii i Gospodarki Wodnej – PIB`
+("Data source: …"), crediting IMGW-PIB as the source of its public data.
 
 Geocoding (turning a place name or coordinates into lat/lon and a display name) uses
 [Open-Meteo](https://open-meteo.com/) and [BigDataCloud](https://www.bigdatacloud.com/);
