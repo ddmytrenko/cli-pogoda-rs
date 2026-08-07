@@ -130,7 +130,7 @@ pub fn run_place(
         }
     };
 
-    let fc = match forecast::parse(&body) {
+    let fc = match forecast::parse(&body, end_of_next_day_utc()) {
         Ok(f) => f,
         Err(_) => {
             eprintln!(
@@ -167,6 +167,23 @@ pub fn run_place(
     let _ = writeln!(out, "\n{}", text::SOURCE);
 
     0
+}
+
+/// Forecast horizon: the end of *tomorrow* in Poland, as a UTC instant. IMGW's step
+/// timestamps are UTC (the trailing `Z`), but "end of tomorrow" is a Warsaw wall-clock
+/// boundary — so we express that boundary in UTC to compare against the step times. The
+/// single conversion is unavoidable; it's not decoration. (Poland's DST switch is at
+/// 02:00/03:00, never midnight, so the local→UTC mapping is always unambiguous.)
+fn end_of_next_day_utc() -> chrono::DateTime<chrono::Utc> {
+    use chrono::{Duration, TimeZone, Utc};
+    let tz = chrono_tz::Europe::Warsaw;
+    let midnight_after_tomorrow = (Utc::now().with_timezone(&tz).date_naive() + Duration::days(2))
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+    tz.from_local_datetime(&midnight_after_tomorrow)
+        .single()
+        .unwrap()
+        .with_timezone(&Utc)
 }
 
 /// Wave 2: fetch the point forecast (non-empty body) and the area code concurrently,

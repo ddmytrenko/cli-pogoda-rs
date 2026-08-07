@@ -72,7 +72,8 @@ fn step_precip(s: &ForecastStep) -> f64 {
     }
 }
 
-pub fn parse(json: &str) -> Result<Forecast> {
+/// Parse the payload, keeping only steps up to `horizon_end` (drop far-out predictions).
+pub fn parse(json: &str, horizon_end: chrono::DateTime<chrono::Utc>) -> Result<Forecast> {
     let resp: ForecastResponse =
         serde_json::from_str(json).map_err(|_| anyhow!("bad forecast JSON"))?;
     let d = resp.data;
@@ -98,6 +99,13 @@ pub fn parse(json: &str) -> Result<Forecast> {
             steps.push(s);
         }
     }
+    // Trim to the forecast horizon (end of tomorrow): drop far-out steps.
+    let horizon_ts = horizon_end.timestamp();
+    steps.retain(|s| {
+        chrono::DateTime::parse_from_rfc3339(&s.date)
+            .map(|d| d.timestamp() < horizon_ts)
+            .unwrap_or(true)
+    });
     if steps.is_empty() {
         steps = d.steps.iter().collect();
     }
@@ -179,6 +187,12 @@ pub fn parse(json: &str) -> Result<Forecast> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
+
+    /// A horizon far in the future — keeps every step (no truncation).
+    fn far() -> chrono::DateTime<chrono::Utc> {
+        chrono::Utc.with_ymd_and_hms(2100, 1, 1, 0, 0, 0).unwrap()
+    }
 
     // A minimal payload mirroring the real API: one 10-min step (current, precip in the
     // *10m fields) + two hourly steps (precip in the un-suffixed fields, *10m null), one
@@ -205,7 +219,7 @@ mod tests {
 
     #[test]
     fn converts_units_and_fields() {
-        let f = parse(FIXTURE).unwrap();
+        let f = parse(FIXTURE, far()).unwrap();
         assert!((f.temp - 26.85).abs() < 1e-6); // 300 - 273.15
         assert!((f.feels - 27.85).abs() < 1e-6);
         assert!((f.pres - 1019.0).abs() < 1e-6); // 101900 / 100
@@ -216,11 +230,21 @@ mod tests {
 
     #[test]
     fn precip_sum_drops_overlapping_hourly_step() {
-        let f = parse(FIXTURE).unwrap();
+        let f = parse(FIXTURE, far()).unwrap();
         // 0.5 (ten) + 1.0 (hour beyond last ten) — the 9.9 overlapping hour is excluded.
         // The hourly amounts come from the un-suffixed Rain/Precipitation fields.
         assert!((f.prec_sum - 1.5).abs() < 1e-6);
         assert!((f.rain_sum - 1.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn horizon_trims_far_out_steps() {
+        // Cut at 10:30 on 07-31: the 11:00 hourly step is dropped, leaving only the
+        // 10:00 ten-minute step (0.5 mm).
+        let cutoff = chrono::Utc.with_ymd_and_hms(2026, 7, 31, 10, 30, 0).unwrap();
+        let f = parse(FIXTURE, cutoff).unwrap();
+        assert!((f.prec_sum - 0.5).abs() < 1e-6, "prec_sum was {}", f.prec_sum);
+        assert!(f.hrs.abs() < 1e-6, "hrs was {}", f.hrs); // single remaining step
     }
 
     #[test]
@@ -241,7 +265,7 @@ mod tests {
             ]
           }
         }"#;
-        let f = parse(json).unwrap();
+        let f = parse(json, far()).unwrap();
         assert!(
             (f.prec_sum - 2.9).abs() < 1e-6,
             "prec_sum was {}",
@@ -268,14 +292,14 @@ mod tests {
 
     #[test]
     fn step_window_span_in_hours() {
-        let f = parse(FIXTURE).unwrap();
+        let f = parse(FIXTURE, far()).unwrap();
         // first step 10:00, last step 11:00 -> 1h
         assert!((f.hrs - 1.0).abs() < 1e-6);
     }
 
     #[test]
     fn invalid_payload_is_rejected() {
-        assert!(parse(r#"{"data":{"Valid":false,"Data":[]}}"#).is_err());
-        assert!(parse(r#"{"data":{"Valid":true,"Data":[]}}"#).is_err());
+        assert!(parse(r#"{"data":{"Valid":false,"Data":[]}}"#, far()).is_err());
+        assert!(parse(r#"{"data":{"Valid":true,"Data":[]}}"#, far()).is_err());
     }
 }
