@@ -307,13 +307,20 @@ fn print_forecast(
         } else {
             text::PRECIP_MIXED
         };
-        // Dry-then-wet: say how long it stays dry, then the amount over the rest.
-        // Otherwise (already/soon raining) just the amount over the window.
+        // At most two clauses, split on whether it's raining now (onset ≈ 0):
+        //   raining now → rain until it stops, then the dry tail (if any)
+        //   dry now     → dry until it starts, then rain over the rest of the window
         let onset = fc.onset_hours.unwrap_or(0.0).round() as i64;
-        let line = if onset >= 1 {
-            text::precip_after_dry(kind, onset, fc.prec_sum, (h - onset).max(0))
+        let line = if onset == 0 {
+            let end = fc.precip_end_hours.unwrap_or(fc.hrs).round() as i64;
+            if h - end >= 1 {
+                let rain_h = end.max(1);
+                text::rain_then_dry(kind, fc.prec_sum, rain_h, Some(h - rain_h))
+            } else {
+                text::rain_then_dry(kind, fc.prec_sum, h, None)
+            }
         } else {
-            text::precip_soon(kind, fc.prec_sum, h)
+            text::dry_then_rain(kind, onset, fc.prec_sum, (h - onset).max(1))
         };
         let _ = writeln!(out, "{line}");
     } else {

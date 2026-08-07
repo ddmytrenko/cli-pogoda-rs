@@ -26,8 +26,9 @@ pub struct Forecast {
     pub prec_sum: f64, // mm over the step window
     pub rain_sum: f64,
     pub snow_sum: f64,
-    pub hrs: f64,                 // span of the step window, hours
-    pub onset_hours: Option<f64>, // hours from now until precip starts; None if dry all window
+    pub hrs: f64,                      // span of the step window, hours
+    pub onset_hours: Option<f64>,      // hours until precip starts; None if dry all window
+    pub precip_end_hours: Option<f64>, // hours until the last precip step; None if dry
 }
 
 /// Parse a numeric string field ("295.0"), or 0.0 when empty/unparseable.
@@ -128,16 +129,18 @@ pub fn parse(json: &str) -> Result<Forecast> {
         _ => 0.0,
     };
 
-    // When does precipitation begin? Earliest step with any precip, in hours from now.
-    let onset_hours = start.and_then(|s0| {
-        steps
-            .iter()
-            .filter(|s| step_precip(s) > 0.0)
-            .filter_map(|s| chrono::DateTime::parse_from_rfc3339(&s.date).ok())
-            .map(|d| d.timestamp())
-            .min()
-            .map(|first| (first - s0) as f64 / 3600.0)
-    });
+    // Precip onset/end: the earliest and latest steps with any precip, in hours from
+    // now. Together they bound the rain within the window (dry before, dry after).
+    let precip_secs: Vec<i64> = steps
+        .iter()
+        .filter(|s| step_precip(s) > 0.0)
+        .filter_map(|s| chrono::DateTime::parse_from_rfc3339(&s.date).ok())
+        .map(|d| d.timestamp())
+        .collect();
+    let onset_hours =
+        start.and_then(|s0| precip_secs.iter().min().map(|&t| (t - s0) as f64 / 3600.0));
+    let precip_end_hours =
+        start.and_then(|s0| precip_secs.iter().max().map(|&t| (t - s0) as f64 / 3600.0));
 
     Ok(Forecast {
         temp,
@@ -159,6 +162,7 @@ pub fn parse(json: &str) -> Result<Forecast> {
         snow_sum,
         hrs,
         onset_hours,
+        precip_end_hours,
     })
 }
 
@@ -238,11 +242,17 @@ mod tests {
             "rain_sum was {}",
             f.rain_sum
         );
-        // dry 10:00 today → rain 09:00 next day = 23h until onset
+        // dry 10:00 today → rain 09:00 next day = 23h until onset; single rainy step,
+        // so onset == end.
         assert!(
             (f.onset_hours.unwrap() - 23.0).abs() < 1e-6,
             "onset was {:?}",
             f.onset_hours
+        );
+        assert!(
+            (f.precip_end_hours.unwrap() - 23.0).abs() < 1e-6,
+            "end was {:?}",
+            f.precip_end_hours
         );
     }
 

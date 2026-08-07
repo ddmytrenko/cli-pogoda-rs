@@ -53,24 +53,28 @@ pub fn banner(place: &str, temp: f64, cond_suffix: &str, feels: f64) -> String {
     format!(" Pogoda: {place} — {temp:.1} °C{cond_suffix}  (IMGW HYBRID, odczuwalna {feels:.1} °C)")
 }
 
-/// Precip already falling / imminent: "<kind>: <amount> mm w ciągu najbliższych <hours>h".
-/// An amount takes "w ciągu" (accumulated within the window), not "przez" (throughout).
-pub fn precip_soon(kind: &str, amount: f64, hours: i64) -> String {
-    format!("   {kind}: {amount:.1} mm w ciągu najbliższych {hours}h")
+/// Raining now: the amount over the next `rain_h` hours, then (if the rain stops before
+/// the window ends) dry for `tail_h`. At most two clauses — a reader doesn't need every
+/// individual shower. "M mm w ciągu najbliższych Xh[, potem sucho przez kolejne Yh]".
+pub fn rain_then_dry(kind: &str, amount: f64, rain_h: i64, tail_h: Option<i64>) -> String {
+    let mut s = format!("   {kind}: {amount:.1} mm w ciągu najbliższych {rain_h}h");
+    if let Some(t) = tail_h {
+        s.push_str(&format!(", potem sucho przez kolejne {t}h"));
+    }
+    s
 }
 
-/// Dry now, precip later: "<kind>: sucho przez najbliższe <dry>h, potem <amount> mm
-/// w ciągu kolejnych <rest>h". Note the deliberate mix: the dry *state* holds "przez"
-/// the period, the rain *amount* falls "w ciągu" (within) it.
-pub fn precip_after_dry(kind: &str, dry_hours: i64, amount: f64, rest_hours: i64) -> String {
+/// Dry now, rain later: dry for `lead_h` hours, then the amount over the rest of the
+/// window (`rain_h`). "sucho przez najbliższe Xh, potem M mm w ciągu kolejnych Yh".
+pub fn dry_then_rain(kind: &str, lead_h: i64, amount: f64, rain_h: i64) -> String {
     format!(
-        "   {kind}: sucho przez najbliższe {dry_hours}h, potem {amount:.1} mm w ciągu kolejnych {rest_hours}h"
+        "   {kind}: sucho przez najbliższe {lead_h}h, potem {amount:.1} mm w ciągu kolejnych {rain_h}h"
     )
 }
 
 /// No precipitation anywhere in the window.
 pub fn precip_none(hours: i64) -> String {
-    format!("   Opady: brak (sucho przez najbliższe {hours}h)")
+    format!("   Opady: sucho przez najbliższe {hours}h")
 }
 
 /// Wind-direction phrases in the genitive, ready to follow "Wiatr " (→ "Wiatr z
@@ -197,4 +201,33 @@ pub fn help_default(current: &str) -> String {
 
 pub fn help_config(path: &str) -> String {
     format!("  Konfiguracja: {path}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rain_now_ending_before_window_end() {
+        assert_eq!(
+            rain_then_dry("Deszcz", 1.6, 6, Some(58)),
+            "   Deszcz: 1.6 mm w ciągu najbliższych 6h, potem sucho przez kolejne 58h"
+        );
+    }
+
+    #[test]
+    fn rain_now_through_whole_window() {
+        assert_eq!(
+            rain_then_dry("Deszcz", 1.6, 64, None),
+            "   Deszcz: 1.6 mm w ciągu najbliższych 64h"
+        );
+    }
+
+    #[test]
+    fn dry_then_rain_over_the_rest() {
+        assert_eq!(
+            dry_then_rain("Śnieg", 16, 5.3, 48),
+            "   Śnieg: sucho przez najbliższe 16h, potem 5.3 mm w ciągu kolejnych 48h"
+        );
+    }
 }
