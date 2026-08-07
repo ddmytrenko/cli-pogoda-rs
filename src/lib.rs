@@ -312,12 +312,19 @@ fn print_forecast(
         //   dry now     → dry until it starts, then rain over the rest of the window
         let onset = fc.onset_hours.unwrap_or(0.0).round() as i64;
         let line = if onset == 0 {
+            // Raining now: classify the current rate (rain only; snow/mixed keep their
+            // label), then the amount until it stops, then the dry tail.
+            let prefix = if kind == text::PRECIP_RAIN {
+                text::rain_intensity(fc.prec_rate_mmh).to_string()
+            } else {
+                format!("{kind}:")
+            };
             let end = fc.precip_end_hours.unwrap_or(fc.hrs).round() as i64;
             if h - end >= 1 {
                 let rain_h = end.max(1);
-                text::rain_then_dry(kind, fc.prec_sum, rain_h, Some(h - rain_h))
+                text::rain_then_dry(&prefix, fc.prec_sum, rain_h, Some(h - rain_h))
             } else {
-                text::rain_then_dry(kind, fc.prec_sum, h, None)
+                text::rain_then_dry(&prefix, fc.prec_sum, h, None)
             }
         } else {
             text::dry_then_rain(kind, onset, fc.prec_sum, (h - onset).max(1))

@@ -29,6 +29,7 @@ pub struct Forecast {
     pub hrs: f64,                      // span of the step window, hours
     pub onset_hours: Option<f64>,      // hours until precip starts; None if dry all window
     pub precip_end_hours: Option<f64>, // hours until the last precip step; None if dry
+    pub prec_rate_mmh: f64,            // current precip rate in mm/h (10-min step ×6)
 }
 
 /// Parse a numeric string field ("295.0"), or 0.0 when empty/unparseable.
@@ -114,6 +115,14 @@ pub fn parse(json: &str) -> Result<Forecast> {
     let rain_sum: f64 = steps.iter().copied().map(step_rain).sum();
     let snow_sum: f64 = steps.iter().copied().map(step_snow).sum();
 
+    // Current precip rate in mm/h: a 10-minute step's accumulation ×6, an hourly step's
+    // as-is. Drives the "raining now" intensity label.
+    let prec_rate_mmh = if c.kind == "Type_Ten_Minutes" {
+        step_precip(c) * 6.0
+    } else {
+        step_precip(c)
+    };
+
     let start = steps
         .first()
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s.date).ok())
@@ -163,6 +172,7 @@ pub fn parse(json: &str) -> Result<Forecast> {
         hrs,
         onset_hours,
         precip_end_hours,
+        prec_rate_mmh,
     })
 }
 

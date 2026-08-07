@@ -53,11 +53,34 @@ pub fn banner(place: &str, temp: f64, cond_suffix: &str, feels: f64) -> String {
     format!(" Pogoda: {place} — {temp:.1} °C{cond_suffix}  (IMGW HYBRID, odczuwalna {feels:.1} °C)")
 }
 
-/// Raining now: the amount over the next `rain_h` hours, then (if the rain stops before
-/// the window ends) dry for `tail_h`. At most two clauses — a reader doesn't need every
-/// individual shower. "M mm w ciągu najbliższych Xh[, potem sucho przez kolejne Yh]".
-pub fn rain_then_dry(kind: &str, amount: f64, rain_h: i64, tail_h: Option<i64>) -> String {
-    let mut s = format!("   {kind}: {amount:.1} mm w ciągu najbliższych {rain_h}h");
+/// Rain-intensity label for the current rate in mm/h — the "raining now" prefix,
+/// including its own punctuation (e.g. `Mżawka.`, `Deszcz: silny.`, `Ulewa!!!`).
+/// Thresholds: <0.25 drizzle, ≤2 light, ≤5 moderate, ≤10 heavy, ≤15 very heavy,
+/// ≤30 downpour, else torrential.
+pub fn rain_intensity(mmh: f64) -> &'static str {
+    if mmh < 0.25 {
+        "Mżawka."
+    } else if mmh <= 2.0 {
+        "Deszcz: lekki."
+    } else if mmh <= 5.0 {
+        "Deszcz: umiarkowany."
+    } else if mmh <= 10.0 {
+        "Deszcz: silny."
+    } else if mmh <= 15.0 {
+        "Deszcz: bardzo silny!"
+    } else if mmh <= 30.0 {
+        "Ulewa!!!"
+    } else {
+        "Nawałnica!!!"
+    }
+}
+
+/// Raining now: `prefix` (a label like "Deszcz:"/"Śnieg:" or an intensity like
+/// "Ulewa!!!", punctuation included) then the amount over the next `rain_h` hours, then
+/// (if the rain stops before the window ends) dry for `tail_h`. At most two clauses — a
+/// reader doesn't need every individual shower.
+pub fn rain_then_dry(prefix: &str, amount: f64, rain_h: i64, tail_h: Option<i64>) -> String {
+    let mut s = format!("   {prefix} {amount:.1} mm w ciągu najbliższych {rain_h}h");
     if let Some(t) = tail_h {
         s.push_str(&format!(", potem sucho przez kolejne {t}h"));
     }
@@ -210,7 +233,7 @@ mod tests {
     #[test]
     fn rain_now_ending_before_window_end() {
         assert_eq!(
-            rain_then_dry("Deszcz", 1.6, 6, Some(58)),
+            rain_then_dry("Deszcz:", 1.6, 6, Some(58)),
             "   Deszcz: 1.6 mm w ciągu najbliższych 6h, potem sucho przez kolejne 58h"
         );
     }
@@ -218,9 +241,35 @@ mod tests {
     #[test]
     fn rain_now_through_whole_window() {
         assert_eq!(
-            rain_then_dry("Deszcz", 1.6, 64, None),
+            rain_then_dry("Deszcz:", 1.6, 64, None),
             "   Deszcz: 1.6 mm w ciągu najbliższych 64h"
         );
+    }
+
+    #[test]
+    fn rain_now_with_intensity_prefix() {
+        // the prefix carries its own punctuation and replaces the plain "Deszcz:"
+        assert_eq!(
+            rain_then_dry(rain_intensity(11.0), 14.0, 3, Some(21)),
+            "   Deszcz: bardzo silny! 14.0 mm w ciągu najbliższych 3h, potem sucho przez kolejne 21h"
+        );
+        assert_eq!(
+            rain_then_dry(rain_intensity(0.2), 3.2, 3, Some(21)),
+            "   Mżawka. 3.2 mm w ciągu najbliższych 3h, potem sucho przez kolejne 21h"
+        );
+    }
+
+    #[test]
+    fn rain_intensity_thresholds() {
+        assert_eq!(rain_intensity(0.24), "Mżawka.");
+        assert_eq!(rain_intensity(0.25), "Deszcz: lekki.");
+        assert_eq!(rain_intensity(2.0), "Deszcz: lekki.");
+        assert_eq!(rain_intensity(2.1), "Deszcz: umiarkowany.");
+        assert_eq!(rain_intensity(5.0), "Deszcz: umiarkowany.");
+        assert_eq!(rain_intensity(9.0), "Deszcz: silny.");
+        assert_eq!(rain_intensity(11.0), "Deszcz: bardzo silny!");
+        assert_eq!(rain_intensity(20.0), "Ulewa!!!");
+        assert_eq!(rain_intensity(40.0), "Nawałnica!!!");
     }
 
     #[test]
