@@ -89,12 +89,12 @@ mod tests {
     fn parses_keys_ignoring_comments_and_sections() {
         let mut m = HashMap::new();
         Config::parse_into(
-            "# a comment\n[section]\nweather_place = Warsaw,PL\n; semi comment\nempty=\n",
+            "# a comment\n[section]\nweather_place = Warszawa,PL\n; semi comment\nempty=\n",
             &mut m,
         );
         assert_eq!(
             m.get("weather_place").map(String::as_str),
-            Some("Warsaw,PL")
+            Some("Warszawa,PL")
         );
         assert_eq!(m.get("empty").map(String::as_str), Some(""));
     }
