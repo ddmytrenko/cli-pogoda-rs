@@ -47,6 +47,13 @@ cargo install --path .
 cargo build --release   # binary at target/release/pogoda
 ```
 
+To install the manual page so `man pogoda` works:
+
+```sh
+mkdir -p ~/.local/share/man/man1
+cp man/pogoda.1 ~/.local/share/man/man1/
+```
+
 ## Usage
 
 ```

@@ -1,0 +1,356 @@
+.\" Man page for pogoda (imgw-rs). Render: man ./man/pogoda.1
+.TH POGODA 1 "2026-08-10" "pogoda 0.1.0" "User Commands"
+.SH NAME
+pogoda \- terminal point\-weather nowcast from IMGW\-PIB
+.SH SYNOPSIS
+.B pogoda
+.RI [ "City,CC" " | " "lat,lon" ]
+.br
+.B pogoda
+.BR \-h | \-\-help
+.SH DESCRIPTION
+.B pogoda
+prints the current weather for one exact geographic point, taken from the
+.B HYBRID
+nowcast of
+.BR IMGW\-PIB ,
+the Polish Institute of Meteorology and Water Management, together with any
+meteorological and hydrological (drought) warnings that are active for that
+point.
+.PP
+Because IMGW is a Poland\-only service, the output is written in
+.BR Polish .
+This manual describes the tool in English, but every label it prints is quoted
+below exactly as it appears.
+.PP
+The location may be given as an argument or read from the configuration file
+(see
+.BR CONFIGURATION ).
+It is resolved as follows:
+.IP \(bu 3
+A
+.I City,CC
+name (for example
+.IR "Warszawa,PL" )
+is geocoded to coordinates. The country code is honoured and the Polish name
+index is queried, so Polish place names resolve correctly.
+.IP \(bu 3
+Bare
+.I lat,lon
+coordinates (for example
+.IR "50.06,19.94" )
+are used directly; a display name is obtained by reverse geocoding.
+.PP
+IMGW's HYBRID endpoint serves a forecast for the exact latitude/longitude
+rather than for a fixed station, so even a small village reports its own point.
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Print a short usage summary \(em including the currently configured default
+location and the path of the configuration file \(em and exit.
+.PP
+There are no other options. In particular there is
+.B no
+.B \-p / \-\-place
+flag: the location is always a plain positional argument. An unrecognised
+option (any argument beginning with
+.RB ` \- ')
+is an error.
+.SH OUTPUT
+Output has three parts, printed top to bottom: active warning boxes (if any),
+the current\-conditions block, and a data\-source line.
+.SS Current conditions
+The main block is headed by a banner:
+.PP
+.RS 4
+.nf
+ Pogoda: <place> \(em <temp> \(de C, <sky>  (IMGW HYBRID, odczuwalna <feels> \(de C)
+.fi
+.RE
+.PP
+followed by these lines (each prefixed with three spaces):
+.TP
+.B Opady / Deszcz / Śnieg
+Precipitation summary for the forecast window (see
+.BR "PRECIPITATION" ).
+.TP
+.B Wiatr
+Wind: direction phrase, speed in m/s, bearing in degrees, and gusts
+.RI ( "w porywach" ).
+.TP
+.B Ciśnienie
+Mean sea\-level pressure in hPa.
+.TP
+.B Wilgotność
+Relative humidity in percent.
+.TP
+.B Zachmurzenie
+Cloud cover in percent.
+.TP
+.B Wschód / Zachód
+Sunrise and sunset times and the length of the day.
+.SS Sky / cloud cover
+The banner's sky word uses the IMGW cloud scale:
+.TP
+.B bezchmurnie
+clear sky (at night)
+.TP
+.B słonecznie
+clear sky (during the day)
+.TP
+.B "zachmurzenie małe"
+few clouds
+.TP
+.B "zachmurzenie umiarkowane"
+scattered clouds
+.TP
+.B "zachmurzenie duże"
+broken clouds
+.TP
+.B "zachmurzenie całkowite"
+overcast
+.SS Wind
+The direction is named after the point of the compass the wind blows
+.IR from ,
+in the genitive case, following the word
+.IR Wiatr :
+.RS 4
+.nf
+N   Wiatr z północy
+NE  Wiatr z północnego wschodu
+E   Wiatr ze wschodu
+SE  Wiatr z południowego wschodu
+S   Wiatr z południa
+SW  Wiatr z południowego zachodu
+W   Wiatr z zachodu
+NW  Wiatr z północnego zachodu
+.fi
+.RE
+.SH PRECIPITATION
+The precipitation line is deliberately short \(em at most two clauses \(em so a
+reader gets the one thing that matters, not a step\-by\-step timeline.
+Which form is used depends on whether it is precipitating at the start of the
+window:
+.TP
+.B Raining now
+The amount that will fall until it stops, then \(em if it stops before the
+window ends \(em how long it stays dry afterwards, e.g.:
+.RS
+.RS 4
+.nf
+Deszcz: umiarkowany. 2.1 mm w ciągu najbliższych 6h, potem sucho przez kolejne 21h
+.fi
+.RE
+.RE
+.TP
+.B Dry now
+How long it stays dry, then the amount that falls over the rest of the window:
+.RS
+.RS 4
+.nf
+Deszcz: sucho przez najbliższe 16h, potem 2.1 mm w ciągu kolejnych 21h
+.fi
+.RE
+.RE
+.TP
+.B No precipitation
+.RS
+.RS 4
+.nf
+Opady: sucho przez najbliższe 37h
+.fi
+.RE
+.RE
+.PP
+The leading label reflects the type: pure rain is
+.IR Deszcz ,
+snow is
+.IR Śnieg ,
+a mix is
+.IR "Deszcz i śnieg" ,
+and any other/unknown mix is
+.IR Opady .
+.SS Rain\-intensity classification
+When it is raining
+.I now
+and the precipitation is pure rain, the label is replaced by an intensity
+phrase derived from the current rate in millimetres per hour (mm/h). The rate
+comes from the 10\-minute data when available (value \(mu 6), otherwise from the
+hourly value. The bands are:
+.TP
+.B < 0.25 mm/h
+.I "Mżawka."
+\(em drizzle
+.TP
+.B 0.25 \(en 2 mm/h
+.I "Deszcz: lekki."
+\(em light rain
+.TP
+.B 2 \(en 5 mm/h
+.I "Deszcz: umiarkowany."
+\(em moderate rain
+.TP
+.B 5 \(en 10 mm/h
+.I "Deszcz: silny."
+\(em heavy rain
+.TP
+.B 10 \(en 15 mm/h
+.I "Deszcz: bardzo silny!"
+\(em very heavy rain
+.TP
+.B 15 \(en 30 mm/h
+.I "Ulewa!!!"
+\(em downpour
+.TP
+.B > 30 mm/h
+.I "Nawałnica!!!"
+\(em torrential rain / cloudburst
+.PP
+Each upper bound is inclusive (a rate of exactly 2 mm/h is still
+.IR lekki ).
+Snow and mixed precipitation keep their plain type label and are not classified
+by intensity.
+.SH WARNINGS
+Warnings are filtered to the
+.I point,
+not to the whole country, and are printed as boxes above the forecast.
+.TP
+.B Meteorological warnings
+Captioned
+.IR "OSTRZEŻENIE!" ,
+with the severity level
+.RI ( "stopień" " 1\(en3)"
+and, when published, the probability in percent. The box gives the event name,
+its validity period
+.RI ( "od " ... " do " ...),
+and IMGW's description. These come from the nationwide feed, filtered to the
+.I powiat
+(county) TERYT code of the point.
+.TP
+.B Hydrological drought
+Captioned
+.IR "UWAGA!" ,
+e.g.
+.IR "Susza hydrologiczna \(em zlewnia Rudawa" .
+Filtered to the river basin containing the point, found by point\-in\-polygon
+over IMGW's basin polygons (cached locally).
+.PP
+Relative days are shown as
+.IR wczoraj ", " dzisiaj ", " jutra
+instead of a date where possible; otherwise the date and time are printed.
+.SH CONFIGURATION
+Configuration is a flat
+.I "key = value"
+INI file at:
+.PP
+.RS 4
+.I $XDG_CONFIG_HOME/pogoda\-rs/config.ini
+.br
+(usually
+.IR ~/.config/pogoda\-rs/config.ini ).
+.RE
+.PP
+Lines beginning with
+.RB ` # "' or `" ; '
+are comments;
+.RI [ section ]
+headers and blank lines are ignored; surrounding quotes on a value are stripped.
+Recognised keys:
+.TP
+.B weather_place
+Default location used when
+.B pogoda
+is run with no argument. Either a
+.I City,CC
+name or
+.I lat,lon
+coordinates, e.g.
+.I "Warszawa,PL"
+or
+.IR "52.2298,21.0118" .
+If it is unset and no argument is given,
+.B pogoda
+prints an error and exits non\-zero.
+.TP
+.B forecast_horizon
+How far ahead the forecast reaches. One of:
+.RS
+.TP
+.B tomorrow
+(default) cap the window at the end of tomorrow in Polish local time. Also the
+behaviour when the key is absent or holds any value other than
+.IR full .
+.TP
+.B full
+show everything IMGW provides (roughly 64 hours).
+.RE
+.SH FILES
+.TP
+.I ~/.config/pogoda\-rs/config.ini
+Configuration file (see
+.BR CONFIGURATION ).
+.TP
+.I ~/.cache/pogoda\-rs/
+Cached API token and IMGW river\-basin polygons. Safe to delete; it is rebuilt
+on demand. Honours
+.IR $XDG_CACHE_HOME .
+.SH ENVIRONMENT
+.TP
+.B NO_COLOR
+If set (to any value), colour output is disabled. Colour is also disabled
+automatically when standard output is not a terminal.
+.TP
+.B XDG_CONFIG_HOME
+Base directory for configuration. Defaults to
+.I ~/.config
+when unset or empty.
+.TP
+.B XDG_CACHE_HOME
+Base directory for cached data. Defaults to
+.I ~/.cache
+when unset or empty.
+.PP
+.B pogoda
+needs network access to reach IMGW and the geocoding services.
+.SH EXIT STATUS
+.TP
+.B 0
+Success (a forecast was printed), or
+.B \-\-help
+was requested.
+.TP
+.B 1
+Failure: an unknown option, no location given and none configured, a place that
+could not be geocoded, or a network/data error talking to IMGW.
+.SH EXAMPLES
+.TP
+.B pogoda
+Forecast for the configured
+.I weather_place.
+.TP
+.B pogoda Kraków
+Forecast for a named place.
+.TP
+.B pogoda \(dqWarszawa,PL\(dq
+Forecast for a named place, disambiguated by country code.
+.TP
+.B pogoda \(dq50.06,19.94\(dq
+Forecast for explicit coordinates.
+.SH DATA SOURCES
+Forecast and warnings:
+.B IMGW\-PIB
+.RI ( "Instytut Meteorologii i Gospodarki Wodnej \(em PIB" ),
+whose public data this tool re\-presents. Place\-name geocoding and timezone
+lookup use
+.BR Open\-Meteo ;
+the reverse\-geocoded display name for coordinates uses
+.BR BigDataCloud .
+.SH SEE ALSO
+Project README and
+.IR config.example.ini .
+Data portals:
+.I https://meteo.imgw.pl
+and
+.IR https://danepubliczne.imgw.pl .
+.SH AUTHOR
+Dmytro Dmytrenko.
