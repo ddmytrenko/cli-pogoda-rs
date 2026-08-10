@@ -64,9 +64,10 @@ Colour output disables itself when stdout is not a terminal or `NO_COLOR` is set
 Config lives at `$XDG_CONFIG_HOME/pogoda-rs/config.ini` (usually
 `~/.config/pogoda-rs/config.ini`). See [`config.example.ini`](config.example.ini).
 
-| Key             | Meaning                                            |
-| --------------- | -------------------------------------------------- |
-| `weather_place` | Default location (`City,CC` or `lat,lon`) when run with no argument. |
+| Key                | Meaning                                                                                     |
+| ------------------ | ------------------------------------------------------------------------------------------- |
+| `weather_place`    | Default location (`City,CC` or `lat,lon`) when run with no argument.                         |
+| `forecast_horizon` | How far ahead to show: `tomorrow` (default) caps at the end of tomorrow, `full` shows all IMGW data (~64h). |
 
 Cached data (API token, basin polygons) lives under
 `$XDG_CACHE_HOME/pogoda-rs/`.

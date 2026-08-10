@@ -241,9 +241,15 @@ mod tests {
     fn horizon_trims_far_out_steps() {
         // Cut at 10:30 on 07-31: the 11:00 hourly step is dropped, leaving only the
         // 10:00 ten-minute step (0.5 mm).
-        let cutoff = chrono::Utc.with_ymd_and_hms(2026, 7, 31, 10, 30, 0).unwrap();
+        let cutoff = chrono::Utc
+            .with_ymd_and_hms(2026, 7, 31, 10, 30, 0)
+            .unwrap();
         let f = parse(FIXTURE, cutoff).unwrap();
-        assert!((f.prec_sum - 0.5).abs() < 1e-6, "prec_sum was {}", f.prec_sum);
+        assert!(
+            (f.prec_sum - 0.5).abs() < 1e-6,
+            "prec_sum was {}",
+            f.prec_sum
+        );
         assert!(f.hrs.abs() < 1e-6, "hrs was {}", f.hrs); // single remaining step
     }
 

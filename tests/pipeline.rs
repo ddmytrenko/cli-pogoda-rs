@@ -9,6 +9,12 @@ use imgw_rs::ui::Colors;
 use mockito::{Matcher, Server, ServerGuard};
 use std::path::PathBuf;
 
+/// A forecast horizon far in the future — no step trimming (tests don't cap).
+fn no_cap() -> chrono::DateTime<chrono::Utc> {
+    use chrono::TimeZone;
+    chrono::Utc.with_ymd_and_hms(9999, 1, 1, 0, 0, 0).unwrap()
+}
+
 /// A fresh, empty cache dir per test so token/basin caches don't leak between runs.
 fn temp_cache(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("imgw-rs-it-{name}"));
@@ -123,6 +129,7 @@ fn happy_path_renders_forecast_and_both_warning_boxes() {
         "50.06,19.94",
         Some(cache.as_path()),
         &Colors::plain(),
+        no_cap(),
         &mut out,
     );
     let text = String::from_utf8(out).unwrap();
@@ -235,6 +242,7 @@ fn renders_warning_dates_relative_to_today() {
         "50.06,19.94",
         Some(cache.as_path()),
         &Colors::plain(),
+        no_cap(),
         &mut out,
     );
     let text = String::from_utf8(out).unwrap();
@@ -309,6 +317,7 @@ fn splits_warnings_into_per_level_boxes_in_severity_order() {
         "50.06,19.94",
         Some(cache.as_path()),
         &Colors::plain(),
+        no_cap(),
         &mut out,
     );
     let text = String::from_utf8(out).unwrap();
@@ -396,6 +405,7 @@ fn no_warnings_renders_only_the_forecast() {
         "50.06,19.94",
         Some(cache.as_path()),
         &Colors::plain(),
+        no_cap(),
         &mut out,
     );
     let text = String::from_utf8(out).unwrap();
@@ -452,6 +462,7 @@ fn falls_back_to_the_builtin_token_when_scraping_fails() {
         "50.06,19.94",
         Some(cache.as_path()),
         &Colors::plain(),
+        no_cap(),
         &mut out,
     );
     let text = String::from_utf8(out).unwrap();
@@ -494,6 +505,7 @@ fn reports_failure_when_the_forecast_is_unavailable() {
         "50.06,19.94",
         Some(cache.as_path()),
         &Colors::plain(),
+        no_cap(),
         &mut out,
     );
 

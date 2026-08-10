@@ -52,22 +52,44 @@ pub fn run() -> i32 {
         }
     };
 
+    // Forecast horizon: cap at end of tomorrow (default), unless `forecast_horizon = full`.
+    let horizon = match cfg.get("forecast_horizon") {
+        Some(v) if v.trim().eq_ignore_ascii_case("full") => full_horizon(),
+        _ => end_of_next_day_utc(),
+    };
+
     let client = Client::new();
     let cache = config::cache_dir();
     let colors = Colors::detect();
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
-    run_place(&client, &place, cache.as_deref(), &colors, &mut out)
+    run_place(
+        &client,
+        &place,
+        cache.as_deref(),
+        &colors,
+        horizon,
+        &mut out,
+    )
+}
+
+/// A horizon far enough ahead that no forecast step is trimmed (`forecast_horizon = full`).
+fn full_horizon() -> chrono::DateTime<chrono::Utc> {
+    use chrono::TimeZone;
+    chrono::Utc.with_ymd_and_hms(9999, 1, 1, 0, 0, 0).unwrap()
 }
 
 /// Fetch and render the forecast (with warnings) for `place`, writing to `out`. Returns
-/// a process exit code; user-facing errors go to stderr. This is the testable core:
-/// point `client`'s endpoints at a mock server and capture `out`.
+/// a process exit code; user-facing errors go to stderr. `horizon_end` caps how far the
+/// forecast reaches (steps beyond it are dropped). This is the testable core: point
+/// `client`'s endpoints at a mock server and capture `out`.
+#[allow(clippy::too_many_arguments)]
 pub fn run_place(
     client: &Client,
     place: &str,
     cache: Option<&Path>,
     colors: &Colors,
+    horizon_end: chrono::DateTime<chrono::Utc>,
     out: &mut impl Write,
 ) -> i32 {
     // Wave 1 — everything that needs neither the token nor the coordinates runs
@@ -130,7 +152,7 @@ pub fn run_place(
         }
     };
 
-    let fc = match forecast::parse(&body, end_of_next_day_utc()) {
+    let fc = match forecast::parse(&body, horizon_end) {
         Ok(f) => f,
         Err(_) => {
             eprintln!(
