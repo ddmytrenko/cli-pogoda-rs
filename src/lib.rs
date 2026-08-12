@@ -15,7 +15,7 @@ pub mod ui;
 pub mod warnings;
 pub mod weather;
 
-use client::Client;
+use client::{Clients, Imgw};
 use config::Config;
 use std::io::Write;
 use std::path::Path;
@@ -58,13 +58,13 @@ pub fn run() -> i32 {
         _ => end_of_next_day_utc(),
     };
 
-    let client = Client::new();
+    let clients = Clients::new();
     let cache = config::cache_dir();
     let colors = Colors::detect();
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     run_place(
-        &client,
+        &clients,
         &place,
         cache.as_deref(),
         &colors,
@@ -82,10 +82,10 @@ fn full_horizon() -> chrono::DateTime<chrono::Utc> {
 /// Fetch and render the forecast (with warnings) for `place`, writing to `out`. Returns
 /// a process exit code; user-facing errors go to stderr. `horizon_end` caps how far the
 /// forecast reaches (steps beyond it are dropped). This is the testable core: point
-/// `client`'s endpoints at a mock server and capture `out`.
+/// the `clients`' endpoints at a mock server and capture `out`.
 #[allow(clippy::too_many_arguments)]
 pub fn run_place(
-    client: &Client,
+    clients: &Clients,
     place: &str,
     cache: Option<&Path>,
     colors: &Colors,
@@ -98,15 +98,15 @@ pub fn run_place(
     // threads borrow `client` etc. and guarantees they're all joined before it returns,
     // so no `'static`/`Arc` is needed and the compiler proves there are no data races.
     let (loc_res, token, meteo_raw, hydro_raw, basins) = std::thread::scope(|s| {
-        let loc = s.spawn(|| geo::resolve(client, place));
+        let loc = s.spawn(|| geo::resolve(&clients.geocoding, &clients.bigdatacloud, place));
         let token = s.spawn(|| {
             cache
-                .and_then(|d| imgw::token(client, d, false).ok())
+                .and_then(|d| imgw::token(&clients.imgw, d, false).ok())
                 .unwrap_or_else(|| imgw::FALLBACK_TOKEN.to_string())
         });
-        let meteo = s.spawn(|| imgw::warning_feed(client, "warningsmeteo"));
-        let hydro = s.spawn(|| imgw::warning_feed(client, "warningshydro"));
-        let basins = s.spawn(|| cache.and_then(|d| imgw::ensure_basins(client, d)));
+        let meteo = s.spawn(|| imgw::warning_feed(&clients.imgw, "warningsmeteo"));
+        let hydro = s.spawn(|| imgw::warning_feed(&clients.imgw, "warningshydro"));
+        let basins = s.spawn(|| cache.and_then(|d| imgw::ensure_basins(&clients.imgw, d)));
         (
             loc.join().unwrap(),
             token.join().unwrap(),
@@ -127,15 +127,15 @@ pub fn run_place(
     // Wave 2 — the two calls that need the token (and coordinates) run concurrently:
     // the point forecast and the area-code lookup that filters the meteo feed.
     let mut token = token;
-    let (mut body, mut area) = fetch_forecast_and_area(client, &token, &loc);
+    let (mut body, mut area) = fetch_forecast_and_area(&clients.imgw, &token, &loc);
 
     // On an empty forecast the cached token may be stale: refresh once and re-run
     // wave 2 with the fresh token (rare path).
     if body.is_none() {
         if let Some(d) = cache {
-            if let Ok(fresh) = imgw::token(client, d, true) {
+            if let Ok(fresh) = imgw::token(&clients.imgw, d, true) {
                 token = fresh;
-                let (body2, area2) = fetch_forecast_and_area(client, &token, &loc);
+                let (body2, area2) = fetch_forecast_and_area(&clients.imgw, &token, &loc);
                 body = body2;
                 if area.is_none() {
                     area = area2;
@@ -211,7 +211,7 @@ fn end_of_next_day_utc() -> chrono::DateTime<chrono::Utc> {
 /// Wave 2: fetch the point forecast (non-empty body) and the area code concurrently,
 /// both using `token`. Returns `(forecast_body, area_code)`.
 fn fetch_forecast_and_area(
-    client: &Client,
+    client: &Imgw,
     token: &str,
     loc: &geo::Location,
 ) -> (Option<String>, Option<String>) {

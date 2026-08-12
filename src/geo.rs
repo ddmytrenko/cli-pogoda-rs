@@ -2,7 +2,7 @@
 //! lat/lon + display name + IANA timezone via external lookups: Open-Meteo forward
 //! geocoding for names, Open-Meteo + BigDataCloud for bare coordinates.
 
-use crate::client::Client;
+use crate::client::{BigDataCloud, Geocoding, Service};
 use crate::model::{
     GeocodeQuery, GeocodeResult, GeocodeResults, OpenMeteoForecast, ReverseGeocode,
     ReverseGeocodeQuery, TimezoneQuery,
@@ -48,10 +48,12 @@ pub fn parse_place(place: &str) -> Place {
     Place::Name { town, country }
 }
 
-pub fn resolve(client: &Client, place: &str) -> Result<Location> {
+/// Resolve a place string to a `Location`. A name needs only the geocoding service;
+/// bare coordinates need geocoding (for the timezone) and BigDataCloud (for a name).
+pub fn resolve(geo: &Geocoding, bdc: &BigDataCloud, place: &str) -> Result<Location> {
     match parse_place(place) {
-        Place::Coords(lat, lon) => resolve_coords(client, lat, lon),
-        Place::Name { town, country } => resolve_name(client, &town, country.as_deref()),
+        Place::Coords(lat, lon) => resolve_coords(geo, bdc, lat, lon),
+        Place::Name { town, country } => resolve_name(geo, &town, country.as_deref()),
     }
 }
 
@@ -71,7 +73,7 @@ fn select_result<'a>(
     }
 }
 
-fn resolve_coords(client: &Client, lat: f64, lon: f64) -> Result<Location> {
+fn resolve_coords(geo: &Geocoding, bdc: &BigDataCloud, lat: f64, lon: f64) -> Result<Location> {
     // timezone from Open-Meteo (auto), default UTC.
     let tz_query = TimezoneQuery {
         latitude: lat,
@@ -79,8 +81,8 @@ fn resolve_coords(client: &Client, lat: f64, lon: f64) -> Result<Location> {
         timezone: "auto",
         forecast_days: 1,
     };
-    let tz = client
-        .get_query(&client.endpoints.open_meteo, &tz_query, 3)
+    let tz = geo
+        .get_query(&geo.timezone, &tz_query, 3)
         .ok()
         .and_then(|b| serde_json::from_str::<OpenMeteoForecast>(&b).ok())
         .map(|r| r.timezone)
@@ -93,8 +95,8 @@ fn resolve_coords(client: &Client, lat: f64, lon: f64) -> Result<Location> {
         longitude: lon,
         locality_language: "en",
     };
-    let label = client
-        .get_query(&client.endpoints.bigdatacloud, &name_query, 3)
+    let label = bdc
+        .get_query(&bdc.reverse, &name_query, 3)
         .ok()
         .and_then(|b| serde_json::from_str::<ReverseGeocode>(&b).ok())
         .and_then(|r| {
@@ -112,7 +114,7 @@ fn resolve_coords(client: &Client, lat: f64, lon: f64) -> Result<Location> {
     })
 }
 
-fn resolve_name(client: &Client, town: &str, country: Option<&str>) -> Result<Location> {
+fn resolve_name(geo: &Geocoding, town: &str, country: Option<&str>) -> Result<Location> {
     // Fetch several candidates (Open-Meteo has no country filter) so `select_result`
     // can pick the one in the requested country.
     let count = if country.is_some() {
@@ -129,8 +131,8 @@ fn resolve_name(client: &Client, town: &str, country: Option<&str>) -> Result<Lo
         language: "pl",
         format: "json",
     };
-    let body = client
-        .get_query(&client.endpoints.geocoding, &query, 3)
+    let body = geo
+        .get_query(&geo.search, &query, 3)
         .map_err(|_| anyhow!(text::GEOCODE_FAILED))?;
 
     let parsed: GeocodeResults =

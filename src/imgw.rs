@@ -3,7 +3,7 @@
 //! feeds, and the cached river-basin polygons. All fetches go through the client's
 //! retry/backoff policy.
 
-use crate::client::Client;
+use crate::client::{Imgw, Service};
 use crate::model::{AreaQuery, AreaResponse, ForecastQuery};
 use anyhow::{anyhow, Result};
 use std::cmp::Ordering;
@@ -27,7 +27,7 @@ fn fresh(path: &Path, ttl: Duration) -> bool {
 
 /// Resolve the app's API token: scrape it from meteo.imgw.pl's JS bundle so it
 /// survives IMGW rotating it. Cached for 12h; `refresh` forces a refetch.
-pub fn token(client: &Client, cache_dir: &Path, refresh: bool) -> Result<String> {
+pub fn token(client: &Imgw, cache_dir: &Path, refresh: bool) -> Result<String> {
     let cache: PathBuf = cache_dir.join(".imgw-token");
     if !refresh && fresh(&cache, TOKEN_TTL) {
         if let Ok(tok) = std::fs::read_to_string(&cache) {
@@ -38,7 +38,7 @@ pub fn token(client: &Client, cache_dir: &Path, refresh: bool) -> Result<String>
         }
     }
 
-    let meteo = &client.endpoints.meteo;
+    let meteo = &client.meteo;
     let index = client.get(&format!("{meteo}/"), 3)?;
     let main = find_between(&index, "main.", ".js")
         .map(|mid| format!("main.{mid}.js"))
@@ -67,8 +67,8 @@ fn find_between(hay: &str, open: &str, close: &str) -> Option<String> {
 }
 
 /// Fetch the HYBRID point forecast body for a coordinate, with the given token.
-pub fn forecast(client: &Client, token: &str, lat: f64, lon: f64) -> Result<String> {
-    let url = format!("{}/api/v1/forecast/fcapi", client.endpoints.meteo);
+pub fn forecast(client: &Imgw, token: &str, lat: f64, lon: f64) -> Result<String> {
+    let url = format!("{}/api/v1/forecast/fcapi", client.meteo);
     let query = ForecastQuery {
         token,
         lat,
@@ -80,8 +80,8 @@ pub fn forecast(client: &Client, token: &str, lat: f64, lon: f64) -> Result<Stri
 
 /// The administrative-area code nearest a coordinate, via IMGW's reverse geocoder. None
 /// on any failure (the meteo-warning box is simply skipped without an area to filter by).
-pub fn area_code(client: &Client, token: &str, lat: f64, lon: f64) -> Option<String> {
-    let url = format!("{}/api/v1/geo/search-reverse", client.endpoints.meteo);
+pub fn area_code(client: &Imgw, token: &str, lat: f64, lon: f64) -> Option<String> {
+    let url = format!("{}/api/v1/geo/search-reverse", client.meteo);
     let query = AreaQuery {
         token,
         lat,
@@ -108,19 +108,19 @@ fn nearest_area(resp: &AreaResponse) -> Option<String> {
 
 /// Fetch a warning feed (retries past 404-ing nodes). Returns the body (may be `[]`
 /// when there are no warnings), or None on total failure.
-pub fn warning_feed(client: &Client, product: &str) -> Option<String> {
-    let url = format!("{}/{product}", client.endpoints.warnings);
+pub fn warning_feed(client: &Imgw, product: &str) -> Option<String> {
+    let url = format!("{}/{product}", client.warnings);
     client.get(&url, 5).ok()
 }
 
 /// Ensure the river-basin polygons are cached and < 30 days old; return the file path.
-pub fn ensure_basins(client: &Client, cache_dir: &Path) -> Option<PathBuf> {
+pub fn ensure_basins(client: &Imgw, cache_dir: &Path) -> Option<PathBuf> {
     let path = cache_dir.join("imgw-zlew.json");
     let present = |p: &Path| std::fs::metadata(p).map(|m| m.len() > 0).unwrap_or(false);
     if fresh(&path, ZLEW_TTL) && present(&path) {
         return Some(path);
     }
-    let url = format!("{}/dyn/data/zlew.json?v=1.38", client.endpoints.meteo);
+    let url = format!("{}/dyn/data/zlew.json?v=1.38", client.meteo);
     if client.get_to_file(&url, &path, 3).is_ok() && present(&path) {
         return Some(path);
     }

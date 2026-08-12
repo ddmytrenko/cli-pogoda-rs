@@ -2,13 +2,14 @@
 //! These verify what the unit tests cannot: that `ureq` actually returns `Err` on the
 //! HTTP statuses IMGW nodes emit (404/422/5xx), so the retry loop re-issues the call.
 
-use pogoda::client::{Client, Endpoints};
-use pogoda::http::Backoff;
 use mockito::Matcher;
+use pogoda::client::Http;
+use pogoda::http::Backoff;
 
-fn test_client() -> Client {
-    // Real agent, real endpoints (unused here), but zero backoff so tests are instant.
-    Client::with(Endpoints::default(), Backoff::none())
+fn test_client() -> Http {
+    // Real agent, but zero backoff so tests are instant. The retry layer lives on the
+    // transport, so we exercise it directly rather than through a service client.
+    Http::new(Backoff::none())
 }
 
 #[test]

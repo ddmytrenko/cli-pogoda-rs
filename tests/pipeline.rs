@@ -3,10 +3,10 @@
 //! happy path (forecast + both warning boxes), the no-warnings path, the fallback
 //! token path, and a hard failure.
 
-use pogoda::client::{Client, Endpoints};
+use mockito::{Matcher, Server, ServerGuard};
+use pogoda::client::{Clients, Endpoints};
 use pogoda::http::Backoff;
 use pogoda::ui::Colors;
-use mockito::{Matcher, Server, ServerGuard};
 use std::path::PathBuf;
 
 /// A forecast horizon far in the future — no step trimming (tests don't cap).
@@ -122,10 +122,10 @@ fn happy_path_renders_forecast_and_both_warning_boxes() {
             .create(),
     );
 
-    let client = Client::with(endpoints_for(&server), Backoff::none());
+    let clients = Clients::with(endpoints_for(&server), Backoff::none());
     let mut out = Vec::new();
     let code = pogoda::run_place(
-        &client,
+        &clients,
         "50.06,19.94",
         Some(cache.as_path()),
         &Colors::plain(),
@@ -235,10 +235,10 @@ fn renders_warning_dates_relative_to_today() {
             .create(),
     );
 
-    let client = Client::with(endpoints_for(&server), Backoff::none());
+    let clients = Clients::with(endpoints_for(&server), Backoff::none());
     let mut out = Vec::new();
     let code = pogoda::run_place(
-        &client,
+        &clients,
         "50.06,19.94",
         Some(cache.as_path()),
         &Colors::plain(),
@@ -310,10 +310,10 @@ fn splits_warnings_into_per_level_boxes_in_severity_order() {
             .create(),
     );
 
-    let client = Client::with(endpoints_for(&server), Backoff::none());
+    let clients = Clients::with(endpoints_for(&server), Backoff::none());
     let mut out = Vec::new();
     let code = pogoda::run_place(
-        &client,
+        &clients,
         "50.06,19.94",
         Some(cache.as_path()),
         &Colors::plain(),
@@ -398,10 +398,10 @@ fn no_warnings_renders_only_the_forecast() {
             .create(),
     );
 
-    let client = Client::with(endpoints_for(&server), Backoff::none());
+    let clients = Clients::with(endpoints_for(&server), Backoff::none());
     let mut out = Vec::new();
     let code = pogoda::run_place(
-        &client,
+        &clients,
         "50.06,19.94",
         Some(cache.as_path()),
         &Colors::plain(),
@@ -455,10 +455,10 @@ fn falls_back_to_the_builtin_token_when_scraping_fails() {
         .with_body(r#"{"type":"FeatureCollection","features":[]}"#)
         .create();
 
-    let client = Client::with(endpoints_for(&server), Backoff::none());
+    let clients = Clients::with(endpoints_for(&server), Backoff::none());
     let mut out = Vec::new();
     let code = pogoda::run_place(
-        &client,
+        &clients,
         "50.06,19.94",
         Some(cache.as_path()),
         &Colors::plain(),
@@ -498,10 +498,10 @@ fn reports_failure_when_the_forecast_is_unavailable() {
         .with_status(500)
         .create();
 
-    let client = Client::with(endpoints_for(&server), Backoff::none());
+    let clients = Clients::with(endpoints_for(&server), Backoff::none());
     let mut out = Vec::new();
     let code = pogoda::run_place(
-        &client,
+        &clients,
         "50.06,19.94",
         Some(cache.as_path()),
         &Colors::plain(),
