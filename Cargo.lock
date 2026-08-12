@@ -116,6 +116,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "cli-pogoda-rs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "chrono-tz",
+ "mockito",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "ureq",
+]
+
+[[package]]
 name = "colored"
 version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -479,20 +493,6 @@ checksum = "cb68373c0d6620ef8105e855e7745e18b0d00d3bdb07fb532e434244cdb9a714"
 dependencies = [
  "icu_normalizer",
  "icu_properties",
-]
-
-[[package]]
-name = "imgw-rs"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "chrono-tz",
- "mockito",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "ureq",
 ]
 
 [[package]]

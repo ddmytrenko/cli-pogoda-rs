@@ -2,8 +2,8 @@
 //! These verify what the unit tests cannot: that `ureq` actually returns `Err` on the
 //! HTTP statuses IMGW nodes emit (404/422/5xx), so the retry loop re-issues the call.
 
-use imgw_rs::client::{Client, Endpoints};
-use imgw_rs::http::Backoff;
+use pogoda::client::{Client, Endpoints};
+use pogoda::http::Backoff;
 use mockito::Matcher;
 
 fn test_client() -> Client {

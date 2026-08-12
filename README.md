@@ -42,16 +42,19 @@ Warnings are filtered to the point, not the country:
 ## Install
 
 ```sh
-cargo install --path .
-# or
-cargo build --release   # binary at target/release/pogoda
+make install       # binary (via cargo) + man page, so `man pogoda` works
+make uninstall     # remove both
 ```
 
-To install the manual page so `man pogoda` works:
+`make install` puts the binary in `~/.cargo/bin` and the man page under
+`~/.local/share/man/man1`. Override the man location with `MANPREFIX`/`MANDIR`
+(e.g. `sudo make install MANPREFIX=/usr/local`).
+
+Or do it by hand:
 
 ```sh
-mkdir -p ~/.local/share/man/man1
-cp man/pogoda.1 ~/.local/share/man/man1/
+cargo install --path .                              # binary
+install -Dm644 man/pogoda.1 ~/.local/share/man/man1/pogoda.1   # man page
 ```
 
 ## Usage

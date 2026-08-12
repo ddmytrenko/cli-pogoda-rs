@@ -3,9 +3,9 @@
 //! happy path (forecast + both warning boxes), the no-warnings path, the fallback
 //! token path, and a hard failure.
 
-use imgw_rs::client::{Client, Endpoints};
-use imgw_rs::http::Backoff;
-use imgw_rs::ui::Colors;
+use pogoda::client::{Client, Endpoints};
+use pogoda::http::Backoff;
+use pogoda::ui::Colors;
 use mockito::{Matcher, Server, ServerGuard};
 use std::path::PathBuf;
 
@@ -124,7 +124,7 @@ fn happy_path_renders_forecast_and_both_warning_boxes() {
 
     let client = Client::with(endpoints_for(&server), Backoff::none());
     let mut out = Vec::new();
-    let code = imgw_rs::run_place(
+    let code = pogoda::run_place(
         &client,
         "50.06,19.94",
         Some(cache.as_path()),
@@ -237,7 +237,7 @@ fn renders_warning_dates_relative_to_today() {
 
     let client = Client::with(endpoints_for(&server), Backoff::none());
     let mut out = Vec::new();
-    let code = imgw_rs::run_place(
+    let code = pogoda::run_place(
         &client,
         "50.06,19.94",
         Some(cache.as_path()),
@@ -312,7 +312,7 @@ fn splits_warnings_into_per_level_boxes_in_severity_order() {
 
     let client = Client::with(endpoints_for(&server), Backoff::none());
     let mut out = Vec::new();
-    let code = imgw_rs::run_place(
+    let code = pogoda::run_place(
         &client,
         "50.06,19.94",
         Some(cache.as_path()),
@@ -400,7 +400,7 @@ fn no_warnings_renders_only_the_forecast() {
 
     let client = Client::with(endpoints_for(&server), Backoff::none());
     let mut out = Vec::new();
-    let code = imgw_rs::run_place(
+    let code = pogoda::run_place(
         &client,
         "50.06,19.94",
         Some(cache.as_path()),
@@ -457,7 +457,7 @@ fn falls_back_to_the_builtin_token_when_scraping_fails() {
 
     let client = Client::with(endpoints_for(&server), Backoff::none());
     let mut out = Vec::new();
-    let code = imgw_rs::run_place(
+    let code = pogoda::run_place(
         &client,
         "50.06,19.94",
         Some(cache.as_path()),
@@ -500,7 +500,7 @@ fn reports_failure_when_the_forecast_is_unavailable() {
 
     let client = Client::with(endpoints_for(&server), Backoff::none());
     let mut out = Vec::new();
-    let code = imgw_rs::run_place(
+    let code = pogoda::run_place(
         &client,
         "50.06,19.94",
         Some(cache.as_path()),

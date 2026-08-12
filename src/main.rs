@@ -1,3 +1,3 @@
 fn main() {
-    std::process::exit(imgw_rs::run());
+    std::process::exit(pogoda::run());
 }

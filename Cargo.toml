@@ -1,9 +1,13 @@
 [package]
-name = "imgw-rs"
+name = "cli-pogoda-rs"
 version = "0.1.0"
 edition = "2021"
 description = "IMGW-PIB point weather nowcast for the terminal"
 license = "MIT"
+
+[lib]
+name = "pogoda"
+path = "src/lib.rs"
 
 [[bin]]
 name = "pogoda"
