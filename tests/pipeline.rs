@@ -130,6 +130,7 @@ fn happy_path_renders_forecast_and_both_warning_boxes() {
         Some(cache.as_path()),
         &Colors::plain(),
         no_cap(),
+        None,
         &mut out,
     );
     let text = String::from_utf8(out).unwrap();
@@ -243,6 +244,7 @@ fn renders_warning_dates_relative_to_today() {
         Some(cache.as_path()),
         &Colors::plain(),
         no_cap(),
+        None,
         &mut out,
     );
     let text = String::from_utf8(out).unwrap();
@@ -318,6 +320,7 @@ fn splits_warnings_into_per_level_boxes_in_severity_order() {
         Some(cache.as_path()),
         &Colors::plain(),
         no_cap(),
+        None,
         &mut out,
     );
     let text = String::from_utf8(out).unwrap();
@@ -406,6 +409,7 @@ fn no_warnings_renders_only_the_forecast() {
         Some(cache.as_path()),
         &Colors::plain(),
         no_cap(),
+        None,
         &mut out,
     );
     let text = String::from_utf8(out).unwrap();
@@ -463,6 +467,7 @@ fn falls_back_to_the_builtin_token_when_scraping_fails() {
         Some(cache.as_path()),
         &Colors::plain(),
         no_cap(),
+        None,
         &mut out,
     );
     let text = String::from_utf8(out).unwrap();
@@ -506,9 +511,99 @@ fn reports_failure_when_the_forecast_is_unavailable() {
         Some(cache.as_path()),
         &Colors::plain(),
         no_cap(),
+        None,
         &mut out,
     );
 
     assert_eq!(code, 1);
     assert!(String::from_utf8(out).unwrap().is_empty());
+}
+
+#[test]
+fn fits_every_line_into_the_terminal_at_any_width() {
+    let mut server = Server::new();
+    let cache = temp_cache("narrow");
+
+    let mut guards = mock_forecast(&mut server);
+    guards.push(
+        server
+            .mock("GET", "/bdc")
+            .match_query(Matcher::Any)
+            .with_body(r#"{"city":"Krakow"}"#)
+            .create(),
+    );
+    guards.push(
+        server
+            .mock("GET", "/om")
+            .match_query(Matcher::Any)
+            .with_body(r#"{"timezone":"Europe/Warsaw"}"#)
+            .create(),
+    );
+    guards.push(
+        server
+            .mock("GET", "/meteo/api/v1/geo/search-reverse")
+            .match_query(Matcher::Any)
+            .with_body(r#"{"data":[{"teryt":"1261","dist":"0.5"}]}"#)
+            .create(),
+    );
+    // A long headline and a long description — both must wrap, not overflow the box.
+    guards.push(
+        server
+            .mock("GET", "/dane/warningsmeteo")
+            .match_query(Matcher::Any)
+            .with_body(
+                r#"[{"nazwa_zdarzenia":"Silny wiatr","stopien":"1","prawdopodobienstwo":"70","obowiazuje_od":"2099-01-04 22:00:00","obowiazuje_do":"2099-01-05 03:00:00","tresc":"Prognozuje się wystąpienie silnego wiatru o średniej prędkości do 40 km/h, w porywach do 75 km/h, południowo-zachodniego, skręcającego na zachodni. Możliwe również burze.","komentarz":"Brak.","teryt":["1261"]}]"#,
+            )
+            .expect_at_least(1)
+            .create(),
+    );
+    guards.push(
+        server
+            .mock("GET", "/meteo/dyn/data/zlew.json")
+            .match_query(Matcher::Any)
+            .with_body(ZLEW)
+            .create(),
+    );
+    guards.push(
+        server
+            .mock("GET", "/dane/warningshydro")
+            .match_query(Matcher::Any)
+            .with_body(
+                r#"[{"stopień":"-1","zdarzenie":"Susza hydrologiczna","obszary":[{"kod_zlewni":["K1"]}]}]"#,
+            )
+            .expect_at_least(1)
+            .create(),
+    );
+
+    let clients = Clients::with(endpoints_for(&server), Backoff::none());
+    // Every width a real window can have, from a phone-sized pane upward: the output
+    // must fit each one, not just some hand-picked size.
+    for cols in (20..=140).step_by(1) {
+        let mut out = Vec::new();
+        let code = pogoda::run_place(
+            &clients,
+            "50.06,19.94",
+            Some(cache.as_path()),
+            &Colors::plain(),
+            no_cap(),
+            Some(cols),
+            &mut out,
+        );
+        let text = String::from_utf8(out).unwrap();
+        assert_eq!(code, 0, "{text}");
+
+        // Nothing — box borders, headline, description, forecast lines — may exceed the
+        // window, or the terminal's own hard wrap breaks the boxes apart.
+        for line in text.lines() {
+            assert!(
+                line.chars().count() <= cols,
+                "at {cols} cols a line is {} wide: {line:?}\n{text}",
+                line.chars().count()
+            );
+        }
+        // Content survives the wrapping at every width.
+        assert!(text.contains("Silny wiatr"), "at {cols} cols:\n{text}");
+        assert!(text.contains("Susza"), "at {cols} cols:\n{text}");
+        assert!(text.contains("Krakow"), "at {cols} cols:\n{text}");
+    }
 }

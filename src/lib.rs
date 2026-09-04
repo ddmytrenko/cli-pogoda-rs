@@ -61,6 +61,7 @@ pub fn run() -> i32 {
     let clients = Clients::new();
     let cache = config::cache_dir();
     let colors = Colors::detect();
+    let width = ui::term_width();
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     run_place(
@@ -69,6 +70,7 @@ pub fn run() -> i32 {
         cache.as_deref(),
         &colors,
         horizon,
+        width,
         &mut out,
     )
 }
@@ -81,8 +83,10 @@ fn full_horizon() -> chrono::DateTime<chrono::Utc> {
 
 /// Fetch and render the forecast (with warnings) for `place`, writing to `out`. Returns
 /// a process exit code; user-facing errors go to stderr. `horizon_end` caps how far the
-/// forecast reaches (steps beyond it are dropped). This is the testable core: point
-/// the `clients`' endpoints at a mock server and capture `out`.
+/// forecast reaches (steps beyond it are dropped). `width` is the terminal width to fit
+/// the output into — `None` (not a terminal) leaves it unwrapped. Both are parameters,
+/// not ambient lookups, so this stays the testable core: point the `clients`' endpoints
+/// at a mock server, pass any width, and capture `out`.
 #[allow(clippy::too_many_arguments)]
 pub fn run_place(
     clients: &Clients,
@@ -90,6 +94,7 @@ pub fn run_place(
     cache: Option<&Path>,
     colors: &Colors,
     horizon_end: chrono::DateTime<chrono::Utc>,
+    width: Option<usize>,
     out: &mut impl Write,
 ) -> i32 {
     // Wave 1 — everything that needs neither the token nor the coordinates runs
@@ -166,12 +171,16 @@ pub fn run_place(
 
     // Render (sequential, ordered) from the already-fetched data: warning boxes above
     // the forecast, then the forecast itself. The banner line sets the shared box width
-    // so every warning box aligns to it.
+    // so every warning box aligns to it — capped at the window, since a box wider than
+    // the terminal gets hard-wrapped by it and its borders fall apart.
     let today = chrono::Utc::now()
         .with_timezone(&chrono_tz::Europe::Warsaw)
         .date_naive();
     let banner = forecast_banner(&fc, &loc);
-    let box_width = banner.chars().count();
+    let box_width = match width {
+        Some(w) => banner.chars().count().min(w),
+        None => banner.chars().count(),
+    };
     render_warnings(
         colors,
         today,
@@ -183,10 +192,13 @@ pub fn run_place(
         box_width,
         out,
     );
-    print_forecast(&fc, &loc, &banner, out);
+    print_forecast(&fc, &loc, &banner, width, out);
 
     // Source attribution, under every forecast.
-    let _ = writeln!(out, "\n{}", text::SOURCE);
+    let _ = writeln!(out);
+    for l in ui::wrap_line(text::SOURCE, width) {
+        let _ = writeln!(out, "{l}");
+    }
 
     0
 }
@@ -240,7 +252,8 @@ fn forecast_banner(fc: &forecast::Forecast, loc: &geo::Location) -> String {
 
 /// Render one warning as a coloured box: level + probability in the caption, the
 /// event/window headline first, then the wrapped description (if any). `inner_width` is
-/// the shared box interior width; the description wraps to fit inside it.
+/// the shared box interior width; headline and description both wrap to fit inside it
+/// (the interior loses two columns to the padding around the content).
 fn emit_warning_box(
     w: &warnings::Warning,
     colors: &Colors,
@@ -248,9 +261,10 @@ fn emit_warning_box(
     out: &mut impl Write,
 ) {
     let caption = text::warning_caption(w.level, &w.prob);
-    let mut body = vec![w.headline.clone()];
+    let text_width = inner_width.saturating_sub(2);
+    let mut body = ui::wrap(&w.headline, text_width);
     if !w.desc.is_empty() {
-        body.extend(ui::wrap(&w.desc, inner_width.saturating_sub(2)));
+        body.extend(ui::wrap(&w.desc, text_width));
     }
     for l in ui::warn_box(
         colors.level(w.level),
@@ -309,12 +323,13 @@ fn render_warnings(
                     emit_warning_box(w, colors, inner, out);
                 }
                 if warnings::drought_hits_basin(&items, &basin.code) {
-                    let line = text::drought_notice(&basin.name);
+                    let body =
+                        ui::wrap(&text::drought_notice(&basin.name), inner.saturating_sub(2));
                     for l in ui::warn_box(
                         &colors.grey,
                         &colors.reset,
                         text::NOTICE_CAPTION,
-                        &[line],
+                        &body,
                         inner,
                     ) {
                         let _ = writeln!(out, "{l}");
@@ -326,14 +341,23 @@ fn render_warnings(
 }
 
 /// Write the forecast block: `banner` (prebuilt), then precip, wind, pressure,
-/// humidity, cloud, sun.
+/// humidity, cloud, sun. Every line is wrapped to `width` (the terminal), so a narrow
+/// window breaks lines between words and keeps the block's indent instead of letting
+/// the terminal chop them mid-word.
 fn print_forecast(
     fc: &forecast::Forecast,
     loc: &geo::Location,
     banner: &str,
+    width: Option<usize>,
     out: &mut impl Write,
 ) {
-    let _ = writeln!(out, "{banner}");
+    let emit = |line: &str, out: &mut dyn Write| {
+        for l in ui::wrap_line(line, width) {
+            let _ = writeln!(out, "{l}");
+        }
+    };
+
+    emit(banner, out);
 
     let h = fc.hrs.round() as i64;
     if fc.prec_sum > 0.0 {
@@ -368,34 +392,29 @@ fn print_forecast(
         } else {
             text::dry_then_rain(kind, onset, fc.prec_sum, (h - onset).max(1))
         };
-        let _ = writeln!(out, "{line}");
+        emit(&line, out);
     } else {
-        let _ = writeln!(out, "{}", text::precip_none(h));
+        emit(&text::precip_none(h), out);
     }
 
     if !fc.wspeed.is_empty() {
         let card = weather::cardinal(&fc.wdir);
         let gust = (!fc.gust.is_empty()).then_some(fc.gust.as_str());
-        let _ = writeln!(
-            out,
-            "{}",
-            text::wind_line(&fc.wspeed, &card, &fc.wdir, gust)
-        );
+        emit(&text::wind_line(&fc.wspeed, &card, &fc.wdir, gust), out);
     }
     if fc.pres > 0.0 {
-        let _ = writeln!(out, "{}", text::pressure_line(fc.pres));
+        emit(&text::pressure_line(fc.pres), out);
     }
     if !fc.hum.is_empty() {
-        let _ = writeln!(out, "{}", text::humidity_line(&fc.hum));
+        emit(&text::humidity_line(&fc.hum), out);
     }
     if !fc.cloud.is_empty() {
-        let _ = writeln!(out, "{}", text::cloud_line(&fc.cloud));
+        emit(&text::cloud_line(&fc.cloud), out);
     }
     if let Some((sr, ss, daysec)) = sun_times(&fc.sunrise, &fc.sunset, &loc.tz) {
-        let _ = writeln!(
+        emit(
+            &text::sun_line(&sr, &ss, daysec / 3600, (daysec % 3600) / 60),
             out,
-            "{}",
-            text::sun_line(&sr, &ss, daysec / 3600, (daysec % 3600) / 60)
         );
     }
 }

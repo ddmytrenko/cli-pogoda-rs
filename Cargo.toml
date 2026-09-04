@@ -21,6 +21,7 @@ serde_json = "1"
 serde_urlencoded = "0.7"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 chrono-tz = "0.10"
+terminal_size = "0.4"
 
 [dev-dependencies]
 mockito = "1"
