@@ -6,7 +6,6 @@
 //! lookups elsewhere.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 // ---------------------------------------------------------------------------------
 // Request query params (serialized to the URL query string via serde_urlencoded).
@@ -240,37 +239,17 @@ pub struct AreaMatch {
     pub distance: String,
 }
 
-/// River-basin polygons — a GeoJSON FeatureCollection.
-#[derive(Debug, Deserialize, Default)]
-#[serde(default)]
-pub struct BasinCollection {
-    pub features: Vec<BasinFeature>,
-}
-
-/// One basin feature.
-#[derive(Debug, Deserialize, Default)]
-#[serde(default)]
+/// One river-basin feature of the GeoJSON FeatureCollection: the `properties` fields
+/// (flattened here by `geojson::de`) plus the polygon itself, deserialized straight into
+/// a `geo` geometry so `geo::Contains` can do the point-in-polygon test — interior rings
+/// (holes) and MultiPolygons included, which is why no coordinate arrays are navigated
+/// by hand any more.
+#[derive(Debug, Deserialize)]
 pub struct BasinFeature {
-    pub geometry: BasinGeometry,
-    pub properties: BasinProperties,
-}
-
-/// A basin's geometry. `coordinates` stays untyped: GeoJSON nests them differently for
-/// Polygon vs MultiPolygon, and they're bare number arrays (no keys to name).
-#[derive(Debug, Deserialize, Default)]
-#[serde(default)]
-pub struct BasinGeometry {
-    #[serde(rename = "type")]
-    pub kind: String,
-    pub coordinates: Value,
-}
-
-/// A basin's properties: its code and human name.
-#[derive(Debug, Deserialize, Default)]
-#[serde(default)]
-pub struct BasinProperties {
-    #[serde(rename = "KOD")]
+    #[serde(rename = "KOD", default)]
     pub code: String,
-    #[serde(rename = "NAZWA")]
+    #[serde(rename = "NAZWA", default)]
     pub name: String,
+    #[serde(deserialize_with = "::geojson::de::deserialize_geometry")]
+    pub geometry: ::geo::Geometry<f64>,
 }

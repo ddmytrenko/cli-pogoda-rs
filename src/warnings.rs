@@ -6,44 +6,23 @@
 //!    basin polygons, then match its code against the active hydro warnings, so a
 //!    warning elsewhere in the country does not raise a box here.
 //!
-//! The point-in-polygon test and both filters are pure and unit-tested; the network
-//! fetches live in imgw.rs.
+//! The basin geometry is `geojson` (typed parsing, straight into `geo` types) plus
+//! `geo::Contains` for the test — not a hand-rolled ray cast. Everything here is pure
+//! and unit-tested apart from reading the cached polygon file; the network fetches live
+//! in imgw.rs.
 
-use crate::model::{BasinCollection, HydroWarning, MeteoWarning};
+use crate::model::{BasinFeature, HydroWarning, MeteoWarning};
 use crate::text;
 use chrono::NaiveDate;
-use serde_json::Value;
+// `::geo` is the crate; this project also has a `crate::geo` module, so paths to the
+// crate are spelled with a leading `::` throughout this file.
+use ::geo::Contains;
 use std::path::Path;
 
 /// Wire values for the hydrological-drought special case: IMGW encodes it as a
 /// level `-1` warning whose event name contains "susza" (Polish for "drought").
 const DROUGHT_LEVEL: &str = "-1";
 const DROUGHT_EVENT_MARKER: &str = "susza";
-
-/// Ray-casting point-in-polygon on a ring of `[lon, lat]` pairs.
-pub fn point_in_ring(ring: &[Vec<f64>], lon: f64, lat: f64) -> bool {
-    let n = ring.len();
-    if n < 3 {
-        return false;
-    }
-    let mut inside = false;
-    for i in 0..n {
-        let pi = &ring[i];
-        let pj = &ring[(i + n - 1) % n];
-        if pi.len() < 2 || pj.len() < 2 {
-            continue;
-        }
-        let (xi, yi) = (pi[0], pi[1]);
-        let (xj, yj) = (pj[0], pj[1]);
-        if (yi > lat) != (yj > lat) {
-            let denom = if (yj - yi) == 0.0 { 1e-15 } else { yj - yi };
-            if lon < (xj - xi) * (lat - yi) / denom + xi {
-                inside = !inside;
-            }
-        }
-    }
-    inside
-}
 
 /// A single warning, rendered as its own box: `level` + `prob` go in the caption,
 /// `headline` is the first body line, `desc` (if any) wraps below it. `from`/`until`
@@ -192,50 +171,35 @@ pub struct Basin {
     pub name: String,
 }
 
-/// Locate the river basin containing (lat, lon) by point-in-polygon over the basin
-/// polygons. Returns the first matching feature's (code, name).
+/// Locate the river basin containing (lat, lon). Reads the cached polygons, then hands
+/// the point-in-polygon test to `geo`.
 pub fn find_basin(basins_path: &Path, lat: f64, lon: f64) -> Option<Basin> {
-    let text = std::fs::read_to_string(basins_path).ok()?;
-    let collection: BasinCollection = serde_json::from_str(&text).ok()?;
-    for f in &collection.features {
-        // Normalise to a list of polygons, each a list of rings (exterior first). The
-        // coordinate arrays stay untyped: GeoJSON nests them by geometry type.
-        let polys: Vec<&Value> = match f.geometry.kind.as_str() {
-            "Polygon" => vec![&f.geometry.coordinates],
-            "MultiPolygon" => f
-                .geometry
-                .coordinates
-                .as_array()
-                .map(|a| a.iter().collect())
-                .unwrap_or_default(),
-            _ => continue,
-        };
-        let hit = polys.iter().any(|poly| {
-            poly.get(0)
-                .and_then(ring_to_vec)
-                .map(|ring| point_in_ring(&ring, lon, lat))
-                .unwrap_or(false)
-        });
-        if hit {
-            return Some(Basin {
-                code: f.properties.code.clone(),
-                name: f.properties.name.clone(),
-            });
-        }
-    }
-    None
+    let json = std::fs::read_to_string(basins_path).ok()?;
+    locate_basin(&parse_basins(&json), lat, lon)
 }
 
-fn ring_to_vec(ring: &Value) -> Option<Vec<Vec<f64>>> {
-    let pts = ring.as_array()?;
-    Some(
-        pts.iter()
-            .filter_map(|p| {
-                let a = p.as_array()?;
-                Some(vec![a.first()?.as_f64()?, a.get(1)?.as_f64()?])
-            })
-            .collect(),
-    )
+/// Deserialize the basin FeatureCollection. A feature that doesn't parse (no geometry,
+/// an unexpected type) is skipped rather than failing the whole file — the rest of the
+/// country still resolves.
+fn parse_basins(json: &str) -> Vec<BasinFeature> {
+    match ::geojson::de::deserialize_feature_collection::<BasinFeature>(json.as_bytes()) {
+        Ok(features) => features.filter_map(Result::ok).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// The first basin whose polygon contains the point. `geo::Contains` handles what the
+/// feed actually holds: MultiPolygons, and interior rings — a point in a basin's hole
+/// belongs to the enclave basin, not to the one surrounding it.
+fn locate_basin(basins: &[BasinFeature], lat: f64, lon: f64) -> Option<Basin> {
+    let point = ::geo::Point::new(lon, lat); // GeoJSON positions are [lon, lat]
+    basins
+        .iter()
+        .find(|b| b.geometry.contains(&point))
+        .map(|b| Basin {
+            code: b.code.clone(),
+            name: b.name.clone(),
+        })
 }
 
 /// True if a hydrological drought (level `-1`, or a drought-marker event) is active for
@@ -252,29 +216,61 @@ pub fn drought_hits_basin(warnings: &[HydroWarning], basin_code: &str) -> bool {
 mod tests {
     use super::*;
 
-    // A unit square with corners (0,0)-(2,2); rings are [lon,lat] pairs, closed.
-    fn square() -> Vec<Vec<f64>> {
-        vec![
-            vec![0.0, 0.0],
-            vec![2.0, 0.0],
-            vec![2.0, 2.0],
-            vec![0.0, 2.0],
-            vec![0.0, 0.0],
-        ]
+    /// Three basins, in GeoJSON's [lon, lat] order and deliberately not square in both
+    /// axes, so a swapped lat/lon would fall outside:
+    ///   K1 — lon 0..8, lat 0..4, with a hole at lon 1..3, lat 1..3
+    ///   K2 — the enclave sitting in K1's hole
+    ///   K3 — a MultiPolygon, two detached squares
+    const BASINS: &str = r#"{"type":"FeatureCollection","features":[
+      {"type":"Feature","properties":{"KOD":"K1","NAZWA":"Wisła"},
+       "geometry":{"type":"Polygon","coordinates":[
+         [[0,0],[8,0],[8,4],[0,4],[0,0]],
+         [[1,1],[3,1],[3,3],[1,3],[1,1]]]}},
+      {"type":"Feature","properties":{"KOD":"K2","NAZWA":"Enklawa"},
+       "geometry":{"type":"Polygon","coordinates":[[[1,1],[3,1],[3,3],[1,3],[1,1]]]}},
+      {"type":"Feature","properties":{"KOD":"K3","NAZWA":"Odra"},
+       "geometry":{"type":"MultiPolygon","coordinates":[
+         [[[10,0],[11,0],[11,1],[10,1],[10,0]]],
+         [[[20,0],[22,0],[22,2],[20,2],[20,0]]]]}}
+    ]}"#;
+
+    fn locate(lat: f64, lon: f64) -> Option<String> {
+        locate_basin(&parse_basins(BASINS), lat, lon).map(|b| b.code)
     }
 
     #[test]
-    fn point_inside_and_outside_square() {
-        let sq = square();
-        assert!(point_in_ring(&sq, 1.0, 1.0)); // centre
-        assert!(!point_in_ring(&sq, 3.0, 1.0)); // east, outside
-        assert!(!point_in_ring(&sq, -1.0, 1.0)); // west, outside
-        assert!(!point_in_ring(&sq, 1.0, 5.0)); // north, outside
+    fn locates_the_basin_containing_the_point() {
+        assert_eq!(locate(2.0, 7.0).as_deref(), Some("K1"));
+        assert_eq!(locate(9.0, 9.0), None); // outside every basin
+        assert_eq!(locate(7.0, 2.0), None); // lat/lon swapped -> outside K1
     }
 
     #[test]
-    fn degenerate_ring_is_never_inside() {
-        assert!(!point_in_ring(&[vec![0.0, 0.0], vec![1.0, 1.0]], 0.5, 0.5));
+    fn an_enclave_wins_over_the_basin_whose_hole_it_sits_in() {
+        // K1 is listed first and its exterior ring covers this point, but the point is
+        // in K1's interior ring (hole), so it belongs to the enclave K2.
+        assert_eq!(locate(2.0, 2.0).as_deref(), Some("K2"));
+    }
+
+    #[test]
+    fn locates_a_point_in_a_multipolygon_part() {
+        assert_eq!(locate(1.0, 21.0).as_deref(), Some("K3")); // second part
+        assert_eq!(locate(0.5, 10.5).as_deref(), Some("K3")); // first part
+    }
+
+    #[test]
+    fn features_that_do_not_parse_are_skipped() {
+        let json = r#"{"type":"FeatureCollection","features":[
+          {"type":"Feature","properties":{"KOD":"BAD","NAZWA":"x"},"geometry":null},
+          {"type":"Feature","properties":{"KOD":"OK","NAZWA":"y"},
+           "geometry":{"type":"Polygon","coordinates":[[[0,0],[2,0],[2,2],[0,2],[0,0]]]}}
+        ]}"#;
+        let basins = parse_basins(json);
+        assert_eq!(basins.len(), 1);
+        assert_eq!(
+            locate_basin(&basins, 1.0, 1.0).map(|b| b.code).as_deref(),
+            Some("OK")
+        );
     }
 
     #[test]
