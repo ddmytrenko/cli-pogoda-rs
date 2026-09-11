@@ -4,7 +4,8 @@
 //! node isn't hammered instantly.
 
 use anyhow::{anyhow, Result};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use rand::{rand_core::UnwrapErr, rngs::SysRng, RngExt};
+use std::time::Duration;
 
 /// Build the shared HTTP agent (gzip like `--compressed`, a sane timeout).
 pub fn agent() -> ureq::Agent {
@@ -53,17 +54,15 @@ impl Backoff {
         Duration::from_millis(capped) + self.jitter_amount()
     }
 
-    /// A pseudo-random 0..=`jitter`, seeded from the wall clock (no extra deps).
+    /// A uniform random 0..=`jitter`, straight from the OS entropy source. Jitter only
+    /// has to decorrelate concurrent clients, so the per-call syscall is cheaper than
+    /// keeping a seeded generator around for the handful of retries in a run.
     fn jitter_amount(&self) -> Duration {
         let j = self.jitter.as_millis() as u64;
         if j == 0 {
             return Duration::ZERO;
         }
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.subsec_nanos() as u64)
-            .unwrap_or(0);
-        Duration::from_millis(nanos % (j + 1))
+        Duration::from_millis(UnwrapErr(SysRng).random_range(0..=j))
     }
 }
 
@@ -182,14 +181,21 @@ mod tests {
     }
 
     #[test]
-    fn jitter_stays_within_bounds() {
+    fn jitter_stays_within_bounds_and_varies() {
         let b = Backoff {
             base: Duration::ZERO,
             max: Duration::ZERO,
             jitter: Duration::from_millis(50),
         };
-        for _ in 0..100 {
-            assert!(b.delay(0) <= Duration::from_millis(50));
+        let draws: Vec<Duration> = (0..100).map(|_| b.delay(0)).collect();
+        for d in &draws {
+            assert!(*d <= Duration::from_millis(50), "{d:?} exceeds the jitter");
         }
+        // Decorrelating retries is the whole point: a constant would pass the bound
+        // check above while leaving every client in lockstep.
+        assert!(
+            draws.iter().collect::<std::collections::HashSet<_>>().len() > 1,
+            "jitter never varied across 100 draws"
+        );
     }
 }
