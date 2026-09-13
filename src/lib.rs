@@ -178,8 +178,8 @@ pub fn run_place(
         .date_naive();
     let banner = forecast_banner(&fc, &loc);
     let box_width = match width {
-        Some(w) => banner.chars().count().min(w),
-        None => banner.chars().count(),
+        Some(w) => ui::display_width(&banner).min(w),
+        None => ui::display_width(&banner),
     };
     render_warnings(
         colors,

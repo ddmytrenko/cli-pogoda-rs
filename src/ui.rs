@@ -59,34 +59,52 @@ pub fn term_width() -> Option<usize> {
     terminal_size::terminal_size().map(|(terminal_size::Width(w), _)| w as usize)
 }
 
-/// Shorten `s` to at most `width` chars, marking the cut with an ellipsis. Only used for
-/// box captions, which are labels; body text is wrapped (never cut) instead.
+/// How many terminal columns `s` occupies. This is what every width here is counted in:
+/// not bytes, and not chars either — a wide character (CJK, an emoji in a geocoded place
+/// name) advances the cursor by two columns, a combining mark by none.
+pub fn display_width(s: &str) -> usize {
+    unicode_width::UnicodeWidthStr::width(s)
+}
+
+/// Shorten `s` to at most `width` columns, marking the cut with an ellipsis. Only used
+/// for box captions, which are labels; body text is wrapped (never cut) instead.
 fn ellipsize(s: &str, width: usize) -> String {
-    if s.chars().count() <= width {
+    if display_width(s) <= width {
         return s.to_string();
     }
-    match width {
-        0 => String::new(),
-        w => s.chars().take(w - 1).chain(['…']).collect(),
+    if width == 0 {
+        return String::new();
     }
+    // Take characters while the result plus the ellipsis still fits.
+    let mut out = String::new();
+    for c in s.chars() {
+        if display_width(&out) + unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) > width - 1
+        {
+            break;
+        }
+        out.push(c);
+    }
+    out.push('…');
+    out
 }
 
 /// Draw a rectangle around `body`, with `caption` set into the top edge. Bars are in
 /// `col`, content left default (reset after each bar). Renders at `width` inner columns
 /// (box total = `width` + 2). A caption too long for the edge is ellipsized; body lines
 /// are never cut — the box grows instead, so callers that must respect a window width
-/// (see `wrap`) pass body already wrapped to `width - 2`. Widths are counted in chars.
+/// (see `wrap`) pass body already wrapped to `width - 2`. Widths are terminal columns
+/// (see `display_width`).
 pub fn warn_box(col: &str, rst: &str, caption: &str, body: &[String], width: usize) -> Vec<String> {
     let mut w = width;
     for l in body {
-        let ln = l.chars().count() + 2;
+        let ln = display_width(l) + 2;
         if ln > w {
             w = ln;
         }
     }
     // "─ caption " — the caption gets whatever the edge leaves it.
     let title = format!("─ {} ", ellipsize(caption, w.saturating_sub(3)));
-    let title_len = title.chars().count();
+    let title_len = display_width(&title);
     let w = w.max(title_len);
     let mut out = Vec::with_capacity(body.len() + 2);
     out.push(format!(
@@ -94,49 +112,40 @@ pub fn warn_box(col: &str, rst: &str, caption: &str, body: &[String], width: usi
         "─".repeat(w.saturating_sub(title_len))
     ));
     for l in body {
-        let pad = w.saturating_sub(2).saturating_sub(l.chars().count());
+        let pad = w.saturating_sub(2).saturating_sub(display_width(l));
         out.push(format!("{col}│{rst} {l}{} {col}│{rst}", " ".repeat(pad)));
     }
     out.push(format!("{col}└{}┘{rst}", "─".repeat(w)));
     out
 }
 
-/// Word-wrap `text` to at most `width` characters per line, breaking on whitespace. A
-/// word too long to ever fit (a narrow window, a long Polish compound) is hard-broken
-/// across lines rather than overflowing — no line comes back wider than `width`.
-/// Paragraphs (separated by a blank line, `\n\n`) are preserved: each is wrapped
-/// independently and separated by one empty line. Empty text -> no lines.
+/// Wrapping options shared by both wrappers: break a word that can't fit rather than
+/// overflow the line, so nothing ever comes back wider than `width`.
+fn wrap_options<'a>(width: usize) -> textwrap::Options<'a> {
+    textwrap::Options::new(width.max(1)).break_words(true)
+}
+
+/// Word-wrap `text` to at most `width` display columns per line. A word too long to ever
+/// fit (a narrow window, a long Polish compound) is broken at a hyphen where there is
+/// one, else hard-broken. Paragraphs (separated by a blank line, `\n\n`) are preserved:
+/// each is wrapped independently and separated by one empty line, and whitespace inside
+/// a paragraph is collapsed so a stray newline in the feed's text doesn't break a line
+/// early. Empty text -> no lines.
 pub fn wrap(text: &str, width: usize) -> Vec<String> {
-    let width = width.max(1);
     let mut lines = Vec::new();
     for paragraph in text.split("\n\n") {
-        if paragraph.split_whitespace().next().is_none() {
+        let words: Vec<&str> = paragraph.split_whitespace().collect();
+        if words.is_empty() {
             continue; // skip empty paragraphs
         }
         if !lines.is_empty() {
             lines.push(String::new()); // blank line between paragraphs
         }
-        let mut cur = String::new();
-        for word in paragraph.split_whitespace() {
-            if cur.is_empty() {
-                cur.push_str(word);
-            } else if cur.chars().count() + 1 + word.chars().count() <= width {
-                cur.push(' ');
-                cur.push_str(word);
-            } else {
-                lines.push(std::mem::take(&mut cur));
-                cur.push_str(word);
-            }
-            // The word just placed may itself be wider than the line: split off full
-            // lines until what's left fits.
-            while cur.chars().count() > width {
-                lines.push(cur.chars().take(width).collect());
-                cur = cur.chars().skip(width).collect();
-            }
-        }
-        if !cur.is_empty() {
-            lines.push(cur);
-        }
+        lines.extend(
+            textwrap::wrap(&words.join(" "), wrap_options(width))
+                .iter()
+                .map(|l| l.to_string()),
+        );
     }
     lines
 }
@@ -145,13 +154,16 @@ pub fn wrap(text: &str, width: usize) -> Vec<String> {
 /// lines so the block stays visually aligned. `None` (output is not a terminal) leaves
 /// the line untouched.
 pub fn wrap_line(line: &str, width: Option<usize>) -> Vec<String> {
-    let Some(width) = width.filter(|w| line.chars().count() > *w) else {
+    let Some(width) = width.filter(|w| display_width(line) > *w) else {
         return vec![line.to_string()];
     };
-    let indent = line.chars().take_while(|c| *c == ' ').count();
-    wrap(line.trim_start(), width.saturating_sub(indent))
-        .into_iter()
-        .map(|l| format!("{}{l}", " ".repeat(indent)))
+    let indent: String = line.chars().take_while(|c| *c == ' ').collect();
+    let options = wrap_options(width)
+        .initial_indent(&indent)
+        .subsequent_indent(&indent);
+    textwrap::wrap(line.trim_start(), options)
+        .iter()
+        .map(|l| l.to_string())
         .collect()
 }
 
@@ -185,11 +197,11 @@ mod tests {
     }
 
     #[test]
-    fn all_rows_share_one_char_width() {
+    fn all_rows_share_one_display_width() {
         let lines = warn_box("", "", "NOTICE", &body(), 0);
-        let w = lines[0].chars().count();
+        let w = display_width(&lines[0]);
         for l in &lines {
-            assert_eq!(l.chars().count(), w);
+            assert_eq!(display_width(l), w);
         }
     }
 
@@ -198,7 +210,7 @@ mod tests {
         // content is short, but width 60 makes every row 60 inner + 2 border = 62.
         let lines = warn_box("", "", "NOTICE", &body(), 60);
         for l in &lines {
-            assert_eq!(l.chars().count(), 62);
+            assert_eq!(display_width(l), 62);
         }
     }
 
@@ -210,8 +222,19 @@ mod tests {
             let body = wrap("Silny wiatr — od 22:00 do jutra 03:00", w.saturating_sub(2));
             let lines = warn_box("", "", "OSTRZEŻENIE! (stopień 1, 70%)", &body, w);
             for l in &lines {
-                assert_eq!(l.chars().count(), w + 2, "at width {w}: {l:?}");
+                assert_eq!(display_width(l), w + 2, "at width {w}: {l:?}");
             }
+        }
+    }
+
+    #[test]
+    fn wide_characters_do_not_skew_the_box() {
+        // Each CJK char occupies two columns: padding by char count would under-pad the
+        // row and leave the right border out of line. Same for the caption's ellipsis.
+        let body = vec!["東京 20 °C".to_string(), "plain ascii".to_string()];
+        let lines = warn_box("", "", "UWAGA! 東京", &body, 24);
+        for l in &lines {
+            assert_eq!(display_width(l), 26, "{l:?}"); // 24 inner + 2 borders
         }
     }
 
@@ -219,25 +242,30 @@ mod tests {
     fn caption_too_long_for_the_edge_is_ellipsized() {
         let lines = warn_box("", "", "OSTRZEŻENIE! (stopień 1, 70%)", &[], 12);
         assert_eq!(lines[0], "┌─ OSTRZEŻE… ┐");
-        assert_eq!(lines[0].chars().count(), 14); // 12 inner + 2 borders
+        assert_eq!(display_width(&lines[0]), 14); // 12 inner + 2 borders
     }
 
     #[test]
     fn wrap_breaks_on_spaces_within_width() {
         assert!(wrap("", 10).is_empty());
         assert_eq!(wrap("one two three", 7), vec!["one two", "three"]);
-        // wide chars counted by char, not byte
+        // multibyte text measured in columns, not bytes
         assert_eq!(wrap("30°C do 33°C", 6), vec!["30°C", "do", "33°C"]);
     }
 
     #[test]
-    fn wrap_hard_breaks_a_word_too_long_to_fit() {
+    fn wrap_breaks_a_word_too_long_to_fit() {
         // no line may exceed the width, even when a single word can't fit on one
         assert_eq!(wrap("aaaaaaaaaa bb", 5), vec!["aaaaa", "aaaaa", "bb"]);
+        // a hyphenated compound breaks at the hyphen when the pieces fit
         assert_eq!(
-            wrap("ab południowo-zachodniego", 10),
-            vec!["ab", "południowo", "-zachodnie", "go"]
+            wrap("ab południowo-zachodniego", 14),
+            vec!["ab południowo-", "zachodniego"]
         );
+        // and when even the pieces don't fit, it still can't overflow
+        for line in wrap("ab południowo-zachodniego", 10) {
+            assert!(display_width(&line) <= 10, "{line:?} overflows");
+        }
     }
 
     #[test]
@@ -251,10 +279,12 @@ mod tests {
             wrap_line("   a very long forecast line indeed", None),
             vec!["   a very long forecast line indeed"]
         );
-        // continuation lines line up under the first
+        // continuation lines line up under the first; the break points come from
+        // textwrap's optimal-fit algorithm, which evens out the ragged edge rather than
+        // greedily filling each line
         assert_eq!(
             wrap_line("   Wiatr z zachodu: 3 m/s", Some(16)),
-            vec!["   Wiatr z", "   zachodu: 3", "   m/s"]
+            vec!["   Wiatr z", "   zachodu:", "   3 m/s"]
         );
     }
 

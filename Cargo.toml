@@ -25,6 +25,8 @@ terminal_size = "0.4"
 geo = "0.33.1"
 geojson = "1.0.0"
 rand = { version = "0.10", default-features = false, features = ["sys_rng"] }
+textwrap = { version = "0.16.3", default-features = false, features = ["unicode-width", "smawk"] }
+unicode-width = "0.2.2"
 
 [dev-dependencies]
 mockito = "1"

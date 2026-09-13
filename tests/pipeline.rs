@@ -596,9 +596,9 @@ fn fits_every_line_into_the_terminal_at_any_width() {
         // window, or the terminal's own hard wrap breaks the boxes apart.
         for line in text.lines() {
             assert!(
-                line.chars().count() <= cols,
+                pogoda::ui::display_width(line) <= cols,
                 "at {cols} cols a line is {} wide: {line:?}\n{text}",
-                line.chars().count()
+                pogoda::ui::display_width(line)
             );
         }
         // Content survives the wrapping at every width.
